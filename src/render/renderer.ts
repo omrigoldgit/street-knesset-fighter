@@ -14,7 +14,12 @@ import { Effects } from './effects';
 import { additive } from './materials';
 import { buildProp } from './props';
 import { buildStage, disposeStage, type BuiltStage } from './stage';
-import { faceTexture } from './faces';
+import { faceTexture, photoHead } from './faces';
+import { EnvBuilder } from './env';
+import { PostFX } from './post';
+import type { Quality } from '../core/settings';
+
+const NEXT_LOWER: Record<Quality, Quality | null> = { ultra: 'high', high: 'low', low: null };
 
 /** Menu showcase turn toward the camera. */
 const FACE_ANGLE = Math.PI / 2 - 0.32;
@@ -37,7 +42,9 @@ class FighterView {
   private prevState = '';
 
   constructor(def: CharacterDef) {
-    this.rig = buildCharacter(def, { face: faceTexture(def.id) });
+    // Best available head: 3D photo face, else the flat photo card, else the caricature.
+    const photo = photoHead(def.id);
+    this.rig = buildCharacter(def, { photo, face: photo ? null : faceTexture(def.id) });
     this.shield = new THREE.Mesh(new THREE.SphereGeometry(1.05, 24, 16), additive(0x9fd3ff, 0.22));
     this.shield.position.y = 0.95;
     this.shield.visible = false;
@@ -276,6 +283,16 @@ export class GameRenderer {
   showHitboxes = false;
   private hitboxGroup = new THREE.Group();
   private platform: THREE.Mesh;
+  private env: EnvBuilder;
+  private post: PostFX;
+  private quality: Quality = 'ultra';
+  private keyOffset = new THREE.Vector3(4, 12, 8);
+  private lastRender = 0;
+  /** Adaptive quality: drops a level if fights run below ~42 fps for a few seconds. */
+  autoQuality = true;
+  private perf = { time: 0, frames: 0, fightUntil: 0 };
+  /** Called when auto-quality steps down, so the UI can tell the player. */
+  onQualityDrop: ((q: Quality) => void) | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -289,26 +306,37 @@ export class GameRenderer {
     this.key.castShadow = true;
     this.key.shadow.mapSize.set(2048, 2048);
     const sc = this.key.shadow.camera;
-    sc.left = -12;
-    sc.right = 12;
-    sc.top = 12;
-    sc.bottom = -12;
+    sc.left = -8;
+    sc.right = 8;
+    sc.top = 8;
+    sc.bottom = -8;
     sc.near = 1;
     sc.far = 60;
-    this.key.shadow.bias = -0.0005;
-    this.key.shadow.normalBias = 0.02;
-    this.scene.add(this.hemi, this.key, this.key.target, this.rim, this.effects.group, this.hitboxGroup);
-    this.platform = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.8, 0.2, 40), new THREE.MeshStandardMaterial({ color: 0x1b2340, metalness: 0.4, roughness: 0.4 }));
+    this.key.shadow.bias = -0.0004;
+    this.key.shadow.normalBias = 0.025;
+    this.key.shadow.radius = 3;
+    this.scene.add(this.hemi, this.key, this.key.target, this.rim, this.rim.target, this.effects.group, this.hitboxGroup);
+    this.platform = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.8, 0.2, 40), new THREE.MeshStandardMaterial({ color: 0x1b2340, metalness: 0.6, roughness: 0.3 }));
     this.platform.visible = false;
     this.scene.add(this.platform);
+    this.env = new EnvBuilder(this.renderer);
+    this.scene.environment = this.env.studio();
+    this.scene.environmentIntensity = 0.6;
+    this.post = new PostFX(this.renderer, this.scene, this.camera);
     this.resize();
   }
 
-  setQuality(q: 'high' | 'low'): void {
+  get currentQuality(): Quality {
+    return this.quality;
+  }
+
+  setQuality(q: Quality): void {
+    this.quality = q;
     const low = q === 'low';
-    this.renderer.setPixelRatio(low ? 1 : Math.min(2, window.devicePixelRatio || 1));
     this.renderer.shadowMap.enabled = !low;
     this.key.castShadow = !low;
+    this.post.setQuality(q);
+    this.perf = { time: 0, frames: 0, fightUntil: 0 };
     this.scene.traverse((o) => {
       const m = (o as THREE.Mesh).material as THREE.Material | undefined;
       if (m) m.needsUpdate = true;
@@ -316,11 +344,19 @@ export class GameRenderer {
     this.resize();
   }
 
+  private pixelRatio(): number {
+    const dpr = window.devicePixelRatio || 1;
+    return this.quality === 'ultra' ? Math.min(dpr, 1.5) : this.quality === 'high' ? Math.min(dpr, 1.25) : 1;
+  }
+
   resize(): void {
     const c = this.renderer.domElement;
     const w = c.clientWidth || window.innerWidth;
     const h = c.clientHeight || window.innerHeight;
+    const pr = this.pixelRatio();
+    this.renderer.setPixelRatio(pr);
     this.renderer.setSize(w, h, false);
+    this.post.setSize(w, h, pr);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
   }
@@ -339,13 +375,20 @@ export class GameRenderer {
     this.scene.fog = new THREE.Fog(L.fog[0], L.fog[1], L.fog[2]);
     this.hemi.color.setHex(L.hemiSky);
     this.hemi.groundColor.setHex(L.hemiGround);
-    this.hemi.intensity = L.hemiIntensity;
+    // The environment map carries most of the ambient light now.
+    this.hemi.intensity = L.hemiIntensity * 0.45;
     this.key.color.setHex(L.key);
-    this.key.intensity = L.keyIntensity;
-    this.key.position.set(...L.keyPos);
+    this.key.intensity = L.keyIntensity * 1.1;
+    this.keyOffset.set(...L.keyPos);
+    this.key.position.copy(this.keyOffset);
+    this.key.target.position.set(0, 0, 0);
     this.rim.color.setHex(L.rim);
-    this.rim.intensity = L.rimIntensity;
+    this.rim.intensity = L.rimIntensity * 1.3;
     this.rim.position.set(-4, 6, -10);
+    this.scene.environment = this.env.fromSpec(def.id, L.env);
+    this.scene.environmentIntensity = L.envIntensity;
+    this.renderer.toneMappingExposure = L.exposure ?? 1;
+    this.post.setLook(L.look ?? {});
   }
 
   clearStage(): void {
@@ -364,8 +407,13 @@ export class GameRenderer {
     this.key.intensity = 2.8;
     this.key.position.set(3, 8, 8);
     this.rim.color.setHex(0x6f8bff);
-    this.rim.intensity = 2.2;
+    this.rim.intensity = 2.8;
     this.rim.position.set(-4, 5, -6);
+    this.key.target.position.set(0, 0, 0);
+    this.scene.environment = this.env.studio();
+    this.scene.environmentIntensity = 0.6;
+    this.renderer.toneMappingExposure = 1;
+    this.post.setLook({ bloom: 0.5, vignette: 0.45 });
   }
 
   // ---------------------------------------------------------------- fight
@@ -396,10 +444,16 @@ export class GameRenderer {
       case 'hit':
         fx.hitSpark(ev.x, ev.y, ev.z, ev.spark, ev.blocked, ev.color);
         if (!ev.blocked && (ev.spark === 'heavy' || ev.spark === 'super' || ev.counter)) this.shake = Math.max(this.shake, ev.spark === 'super' ? 0.18 : 0.08);
+        if (!ev.blocked) {
+          if (ev.counter) this.post.pulse(0.05, 0.1, 0xfff0c0);
+          else if (ev.spark === 'super') this.post.pulse(0.06, 0.16, 0xffe08a);
+          else if (ev.spark === 'heavy' || ev.spark === 'special') this.post.pulse(0.025);
+        }
         break;
       case 'superFlash': {
         const f = m.fighters[ev.fighter];
         this.superFocus = { fighter: ev.fighter, frames: 48 };
+        this.post.pulse(0.03, 0.22, ev.color);
         fx.ring(f.x, 1.1, f.z, ev.color, 0.3, 3.5, 30);
         fx.burst(f.x, 1.2, f.z, ev.color, 50, 0.14, 0.07, 0.001, 40);
         break;
@@ -470,6 +524,7 @@ export class GameRenderer {
           const f = m.fighters[ev.loser];
           fx.flash(f.x, 1.0, f.z, 0xffffff, 3, 16);
         }
+        this.post.pulse(0.08, 0.35);
         break;
       }
     }
@@ -505,6 +560,16 @@ export class GameRenderer {
     this.effects.update(dt, this.camera);
     this.hideOccluders();
     this.drawHitboxes(m);
+    // Keep the shadow map centred on the action for crisp shadows anywhere in the arena.
+    const [a, b] = m.fighters;
+    const mx = (a.x + b.x) / 2;
+    const mz = (a.z + b.z) / 2;
+    this.key.target.position.set(mx, 0, mz);
+    this.key.position.set(mx + this.keyOffset.x, this.keyOffset.y, mz + this.keyOffset.z);
+    // Rim light stays behind the fighters as the camera orbits, outlining them against the set.
+    this.rim.position.set(mx - m.camN.x * 8, 5.5, mz - m.camN.z * 8);
+    this.rim.target.position.set(mx, 1, mz);
+    this.perf.fightUntil = this.time + 0.5;
   }
 
   /**
@@ -714,7 +779,28 @@ export class GameRenderer {
   }
 
   render(): void {
-    this.renderer.render(this.scene, this.camera);
+    const now = performance.now();
+    const dt = this.lastRender ? Math.min(0.1, (now - this.lastRender) / 1000) : 1 / 60;
+    this.lastRender = now;
+    if (this.quality === 'low') this.renderer.render(this.scene, this.camera);
+    else this.post.render(dt);
+    this.trackPerformance(dt);
+  }
+
+  /** Steps quality down when fights run slowly (never back up; the Options menu can). */
+  private trackPerformance(dt: number): void {
+    if (!this.autoQuality || this.time > this.perf.fightUntil) return;
+    this.perf.time += dt;
+    this.perf.frames++;
+    if (this.perf.time < 4) return;
+    const fps = this.perf.frames / this.perf.time;
+    this.perf.time = 0;
+    this.perf.frames = 0;
+    const next = NEXT_LOWER[this.quality];
+    if (fps < 42 && next) {
+      this.setQuality(next);
+      this.onQualityDrop?.(next);
+    }
   }
 }
 

@@ -369,7 +369,7 @@ function wrap(a: number): number {
  * Two-bone IK: rotates hip (x, z) and knee (x) so the ankle reaches `target` (root space),
  * blended with the FK pose by `w`, then turns the foot flat on the floor.
  */
-function solveLeg(hip: THREE.Group, knee: THREE.Group, foot: THREE.Group, target: THREE.Vector3, w: number, toeYaw: number): void {
+function solveLeg(hip: THREE.Object3D, knee: THREE.Object3D, foot: THREE.Object3D, target: THREE.Vector3, w: number, toeYaw: number): void {
   if (w <= 0.001) {
     foot.quaternion.identity();
     return;

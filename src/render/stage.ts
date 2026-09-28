@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import type { StageDef } from '../data/stages';
 import { ARENA_RADIUS } from '../game/constants';
+import type { EnvSpec } from './env';
 import { additive, toon } from './materials';
 
 export interface StageLighting {
@@ -19,6 +20,12 @@ export interface StageLighting {
   keyPos: [number, number, number];
   rim: number;
   rimIntensity: number;
+  /** Image-based lighting source. */
+  env: EnvSpec;
+  envIntensity: number;
+  exposure?: number;
+  /** Post-processing mood. */
+  look?: { bloom?: number; threshold?: number; vignette?: number; saturation?: number; contrast?: number };
 }
 
 export interface BuiltStage {
@@ -113,7 +120,7 @@ function wallRing(
 }
 
 /** Inward-facing cylindrical wall: invisible from outside, so it never blocks the camera. */
-function enclosure(g: THREE.Group, r: number, h: number, mat: THREE.MeshStandardMaterial | THREE.MeshToonMaterial, y = 0): THREE.Mesh {
+function enclosure(g: THREE.Group, r: number, h: number, mat: THREE.MeshStandardMaterial, y = 0): THREE.Mesh {
   mat.side = THREE.BackSide;
   const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 64, 1, true), mat);
   m.position.y = y + h / 2;
@@ -466,6 +473,9 @@ function plenum(): BuiltStage {
       hemiSky: 0xfff0d8, hemiGround: 0x2a2a44, hemiIntensity: 1.1,
       key: 0xfff1d6, keyIntensity: 2.6, keyPos: [4, 14, 8],
       rim: 0x6f9bff, rimIntensity: 1.4,
+      env: { top: 0x3a3226, horizon: 0x8a7a60, bottom: 0x1c2a4a, lights: [{ dir: [0, 1, 0.2], color: 0xfff1d6, intensity: 6, size: 30 }, { dir: [0.8, 0.5, 0.4], color: 0xffe4b8, intensity: 3, size: 14 }, { dir: [-0.8, 0.5, -0.4], color: 0x9fb8ff, intensity: 2, size: 14 }] },
+      envIntensity: 0.55,
+      look: { bloom: 0.38, vignette: 0.34, saturation: 1.06, contrast: 1.07 },
     },
   };
 }
@@ -550,6 +560,10 @@ function plaza(): BuiltStage {
       hemiSky: 0xcfe8ff, hemiGround: 0x8a7a5a, hemiIntensity: 1.3,
       key: 0xfff5e0, keyIntensity: 3.0, keyPos: [-8, 16, 10],
       rim: 0xffffff, rimIntensity: 0.6,
+      env: { top: 0x2f7fd9, horizon: 0xe8f2fb, bottom: 0xb8a888, lights: [{ dir: [-0.5, 0.8, 0.5], color: 0xfff5e0, intensity: 18, size: 6 }] },
+      envIntensity: 0.8,
+      exposure: 0.95,
+      look: { bloom: 0.3, threshold: 0.9, vignette: 0.26, saturation: 1.05, contrast: 1.05 },
     },
   };
 }
@@ -629,6 +643,9 @@ function committee(): BuiltStage {
       hemiSky: 0xffe2c0, hemiGround: 0x2a1a14, hemiIntensity: 1.0,
       key: 0xffe6c4, keyIntensity: 2.5, keyPos: [3, 12, 7],
       rim: 0xffb070, rimIntensity: 1.2,
+      env: { top: 0x2a1a10, horizon: 0x6b4a2e, bottom: 0x3a1818, lights: [{ dir: [0, 1, 0], color: 0xffe6c4, intensity: 5, size: 24 }, { dir: [0, 0.3, -1], color: 0x6aa8ff, intensity: 2, size: 10 }] },
+      envIntensity: 0.5,
+      look: { bloom: 0.4, vignette: 0.38, saturation: 1.04, contrast: 1.08 },
     },
   };
 }
@@ -708,6 +725,9 @@ function beach(): BuiltStage {
       hemiSky: 0xffc59a, hemiGround: 0x6a4a6a, hemiIntensity: 1.2,
       key: 0xffb070, keyIntensity: 3.0, keyPos: [-10, 9, 6],
       rim: 0xff5ea8, rimIntensity: 1.2,
+      env: { top: 0x3a3f8f, horizon: 0xff9a5a, bottom: 0xc89a70, lights: [{ dir: [-1, 0.12, -0.1], color: 0xffb35a, intensity: 14, size: 8 }] },
+      envIntensity: 0.75,
+      look: { bloom: 0.5, threshold: 0.82, vignette: 0.3, saturation: 1.12, contrast: 1.05 },
     },
   };
 }
@@ -794,6 +814,9 @@ function market(): BuiltStage {
       hemiSky: 0x5a6aa0, hemiGround: 0x2a1a10, hemiIntensity: 0.8,
       key: 0xffd4a0, keyIntensity: 2.2, keyPos: [5, 12, 8],
       rim: 0x7a8cff, rimIntensity: 1.5,
+      env: { top: 0x0a0c20, horizon: 0x3a2a3a, bottom: 0x2a1a10, lights: [{ dir: [0.5, 0.6, 0.5], color: 0xffb060, intensity: 6, size: 8 }, { dir: [-0.5, 0.6, -0.5], color: 0xffb060, intensity: 6, size: 8 }] },
+      envIntensity: 0.6,
+      look: { bloom: 0.6, threshold: 0.78, vignette: 0.4, saturation: 1.1, contrast: 1.08 },
     },
   };
 }
@@ -894,6 +917,9 @@ function rooftop(): BuiltStage {
       hemiSky: 0x6070c0, hemiGround: 0x201830, hemiIntensity: 0.9,
       key: 0xc8d4ff, keyIntensity: 2.4, keyPos: [6, 14, 9],
       rim: 0xff4fa3, rimIntensity: 2.0,
+      env: { top: 0x05060f, horizon: 0x2a1d50, bottom: 0x3a2a18, lights: [{ dir: [0.3, 0.2, -1], color: 0xffd9a0, intensity: 4, size: 16 }, { dir: [-0.9, 0.3, 0.2], color: 0xff4fa3, intensity: 3, size: 10 }] },
+      envIntensity: 0.7,
+      look: { bloom: 0.65, threshold: 0.75, vignette: 0.42, saturation: 1.12, contrast: 1.1 },
     },
   };
 }

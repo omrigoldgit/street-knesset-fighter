@@ -11,8 +11,18 @@ import {
   pageImagesUrl, parseImageInfo, parsePageImages, portraitRect, type Crop, type ImageLicense, type PageImage,
 } from '../core/wiki';
 import { detectFace } from './faceDetect';
+import { decodeMesh, encodeMesh, meshFace, type FaceMeshData } from './faceMesh';
+import { CHEEK_POINTS } from './faceTopology';
 
 export type FaceMode = 'photo' | 'cartoon';
+
+/** Everything needed to build a textured 3D head from a photo. */
+export interface PhotoHead {
+  texture: THREE.Texture;
+  mesh: FaceMeshData;
+  /** Skin tone sampled from the cheeks. */
+  skin: number;
+}
 
 export interface FaceSource {
   kind: 'wiki' | 'upload';
@@ -35,9 +45,15 @@ export interface FaceEntry {
   head: HTMLCanvasElement;
   portrait: string;
   texture: THREE.CanvasTexture | null;
+  /** Square crop around the face that the 3D face mesh is textured from. */
+  meshCanvas: HTMLCanvasElement | null;
+  mesh: FaceMeshData | null;
+  meshTexture: THREE.CanvasTexture | null;
+  skin: number | null;
 }
 
 const HEAD_W = 256;
+const MESH_SIZE = 512;
 const HEAD_H = 320;
 const faces = new Map<string, FaceEntry>();
 const wikiInfo = new Map<string, FaceSource>();
@@ -64,6 +80,8 @@ function save(key: string, v: unknown): void {
 const disabled = new Set<string>(load<string[]>('skf.faceDisabled', []));
 const userCrops: Record<string, Crop & { url: string }> = load('skf.faceCrops', {});
 const autoCrops: Record<string, Crop & { detected: boolean }> = load('skf.faceAutoCrops', {});
+/** Cached 3D face reconstructions, keyed by photo URL + crop. */
+const meshCache: Record<string, string> = load('skf.faceMesh.v1', {});
 
 // ------------------------------------------------------------------ public API
 
@@ -100,6 +118,18 @@ export function faceTexture(id: string): THREE.Texture | null {
     f.texture.anisotropy = 4;
   }
   return f.texture;
+}
+
+/** Textured 3D face data, when the photo could be reconstructed. */
+export function photoHead(id: string): PhotoHead | null {
+  const f = getFace(id);
+  if (!f?.mesh || !f.meshCanvas) return null;
+  if (!f.meshTexture) {
+    f.meshTexture = new THREE.CanvasTexture(f.meshCanvas);
+    f.meshTexture.colorSpace = THREE.SRGBColorSpace;
+    f.meshTexture.anisotropy = 8;
+  }
+  return { texture: f.meshTexture, mesh: f.mesh, skin: f.skin ?? 0xd9a27c };
 }
 
 export function facePortrait(id: string): string | undefined {
@@ -244,6 +274,68 @@ async function autoCrop(canvas: HTMLCanvasElement, url: string): Promise<{ crop:
   return result;
 }
 
+/** Square crop around the face for the face mesh (the head fills most of it). */
+function meshCropCanvas(src: HTMLCanvasElement, c: Crop): HTMLCanvasElement {
+  const W = src.width;
+  const H = src.height;
+  const side = c.h * H * 1.15;
+  const cx = c.cx * W;
+  const cy = c.cy * H + c.h * H * 0.08;
+  const out = document.createElement('canvas');
+  out.width = MESH_SIZE;
+  out.height = MESH_SIZE;
+  const g = out.getContext('2d', { willReadFrequently: true })!;
+  g.fillStyle = edgeColor(src);
+  g.fillRect(0, 0, MESH_SIZE, MESH_SIZE);
+  g.drawImage(src, cx - side / 2, cy - side / 2, side, side, 0, 0, MESH_SIZE, MESH_SIZE);
+  return out;
+}
+
+/** Average cheek colour: the skin tone for the neck, hands and skull around the photo face. */
+function sampleSkin(c: HTMLCanvasElement, m: FaceMeshData): number {
+  const g = c.getContext('2d', { willReadFrequently: true })!;
+  let r = 0;
+  let gr = 0;
+  let b = 0;
+  let n = 0;
+  for (const i of CHEEK_POINTS) {
+    const x = Math.round(m.uv[i * 2] * c.width);
+    const y = Math.round(m.uv[i * 2 + 1] * c.height);
+    const d = g.getImageData(Math.max(0, x - 3), Math.max(0, y - 3), 7, 7).data;
+    for (let k = 0; k < d.length; k += 4) {
+      r += d[k];
+      gr += d[k + 1];
+      b += d[k + 2];
+      n++;
+    }
+  }
+  if (!n) return 0xd9a27c;
+  return (Math.round(r / n) << 16) | (Math.round(gr / n) << 8) | Math.round(b / n);
+}
+
+/** Reconstructs the 3D face for an entry (cached per photo and crop). */
+async function attachMesh(entry: FaceEntry): Promise<void> {
+  const canvas = meshCropCanvas(entry.image, entry.crop);
+  const c = entry.crop;
+  const key = `${entry.source.url}|${c.cx.toFixed(3)},${c.cy.toFixed(3)},${c.h.toFixed(3)}`;
+  const cacheable = entry.source.kind === 'wiki';
+  let data = cacheable && meshCache[key] ? decodeMesh(meshCache[key]) : null;
+  if (!data) {
+    data = await meshFace(canvas);
+    if (data && cacheable) {
+      meshCache[key] = encodeMesh(data);
+      save('skf.faceMesh.v1', meshCache);
+    }
+  }
+  entry.meshCanvas = canvas;
+  entry.mesh = data;
+  entry.skin = data ? sampleSkin(canvas, data) : null;
+  if (entry.meshTexture) {
+    entry.meshTexture.image = canvas;
+    entry.meshTexture.needsUpdate = true;
+  }
+}
+
 async function makeEntry(def: CharacterDef, source: FaceSource, imgUrl: string): Promise<FaceEntry> {
   const img = await loadImage(imgUrl);
   const canvas = toCanvas(img);
@@ -252,8 +344,12 @@ async function makeEntry(def: CharacterDef, source: FaceSource, imgUrl: string):
   const { crop: auto, detected } = await autoCrop(canvas, source.url);
   const user = userCrops[def.id];
   const crop = user && user.url === source.url ? { cx: user.cx, cy: user.cy, h: user.h } : auto;
-  const entry: FaceEntry = { id: def.id, image: canvas, source, crop, auto, detected, head: document.createElement('canvas'), portrait: '', texture: null };
+  const entry: FaceEntry = {
+    id: def.id, image: canvas, source, crop, auto, detected, head: document.createElement('canvas'), portrait: '', texture: null,
+    meshCanvas: null, mesh: null, meshTexture: null, skin: null,
+  };
   render(entry, def);
+  await attachMesh(entry);
   return entry;
 }
 
@@ -406,6 +502,16 @@ export function setCrop(def: CharacterDef, crop: Crop): void {
   save('skf.faceCrops', userCrops);
   render(e, def);
   version++;
+  scheduleMesh(e);
+}
+
+/** Re-runs the 3D reconstruction after a crop edit, debounced while the player drags. */
+const meshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+function scheduleMesh(e: FaceEntry): void {
+  clearTimeout(meshTimers.get(e.id));
+  meshTimers.set(e.id, setTimeout(() => {
+    attachMesh(e).then(() => version++).catch(() => undefined);
+  }, 400));
 }
 
 export function resetCrop(def: CharacterDef): void {
@@ -416,6 +522,7 @@ export function resetCrop(def: CharacterDef): void {
   e.crop = { ...e.auto };
   render(e, def);
   version++;
+  scheduleMesh(e);
 }
 
 export async function uploadFace(def: CharacterDef, file: Blob): Promise<boolean> {

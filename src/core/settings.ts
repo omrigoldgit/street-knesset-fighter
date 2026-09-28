@@ -9,9 +9,14 @@ export interface Settings {
   rumble: boolean;
   showHitboxes: boolean;
   inputDisplay: boolean;
-  quality: 'high' | 'low';
+  quality: Quality;
   faces: 'photo' | 'cartoon';
 }
+
+/** Ultra: ambient occlusion + bloom + MSAA; High: bloom + MSAA; Low: no post-processing or shadows. */
+export type Quality = 'ultra' | 'high' | 'low';
+export const QUALITIES: Quality[] = ['ultra', 'high', 'low'];
+export const QUALITY_NAMES: Record<Quality, string> = { ultra: 'Ultra', high: 'High', low: 'Low' };
 
 export const DEFAULT_SETTINGS: Settings = {
   difficulty: 1,
@@ -24,7 +29,7 @@ export const DEFAULT_SETTINGS: Settings = {
   rumble: true,
   showHitboxes: false,
   inputDisplay: false,
-  quality: 'high',
+  quality: 'ultra',
   faces: 'photo',
 };
 
@@ -33,7 +38,11 @@ const KEY = 'skf.settings';
 export function loadSettings(): Settings {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) return { ...DEFAULT_SETTINGS, ...(JSON.parse(raw) as Partial<Settings>) };
+    if (raw) {
+      const s = { ...DEFAULT_SETTINGS, ...(JSON.parse(raw) as Partial<Settings>) };
+      if (!QUALITIES.includes(s.quality)) s.quality = DEFAULT_SETTINGS.quality;
+      return s;
+    }
   } catch {
     /* ignore */
   }

@@ -121,7 +121,7 @@ export function buildProp(style: PropStyle, color: number): THREE.Group {
       s.lineTo(-0.15, 0);
       s.lineTo(-0.25, -0.2);
       s.closePath();
-      const m = add(g, new THREE.ShapeGeometry(s), new THREE.MeshToonMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
+      const m = add(g, new THREE.ShapeGeometry(s), new THREE.MeshStandardMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
       m.rotation.x = Math.PI / 2;
       add(g, new THREE.BoxGeometry(0.5, 0.02, 0.02), 0xdddddd, [0.02, -0.03, 0]);
       break;
@@ -184,7 +184,7 @@ export function buildProp(style: PropStyle, color: number): THREE.Group {
       break;
     }
     case 'syringe': {
-      add(g, new THREE.CylinderGeometry(0.06, 0.06, 0.34, 12), new THREE.MeshToonMaterial({ color: 0xe8f7ff, transparent: true, opacity: 0.75 }), [0, 0, 0], [0, 0, Math.PI / 2]);
+      add(g, new THREE.CylinderGeometry(0.06, 0.06, 0.34, 12), new THREE.MeshStandardMaterial({ color: 0xe8f7ff, transparent: true, opacity: 0.75 }), [0, 0, 0], [0, 0, Math.PI / 2]);
       add(g, new THREE.CylinderGeometry(0.05, 0.05, 0.24, 10), additive(color, 0.9), [0.03, 0, 0], [0, 0, Math.PI / 2]);
       add(g, new THREE.CylinderGeometry(0.006, 0.006, 0.16, 6), 0xcccccc, [0.25, 0, 0], [0, 0, Math.PI / 2]);
       add(g, new THREE.CylinderGeometry(0.02, 0.02, 0.12, 6), 0x999999, [-0.22, 0, 0], [0, 0, Math.PI / 2]);
@@ -201,7 +201,7 @@ export function buildProp(style: PropStyle, color: number): THREE.Group {
       break;
     }
     case 'megaphone': {
-      add(g, new THREE.CylinderGeometry(0.2, 0.06, 0.4, 14, 1, true), new THREE.MeshToonMaterial({ color: 0xf2f2f2, side: THREE.DoubleSide }), [0.05, 0, 0], [0, 0, -Math.PI / 2]);
+      add(g, new THREE.CylinderGeometry(0.2, 0.06, 0.4, 14, 1, true), new THREE.MeshStandardMaterial({ color: 0xf2f2f2, side: THREE.DoubleSide }), [0.05, 0, 0], [0, 0, -Math.PI / 2]);
       add(g, new THREE.TorusGeometry(0.2, 0.02, 6, 20), color, [0.25, 0, 0], [0, Math.PI / 2, 0]);
       add(g, new THREE.BoxGeometry(0.05, 0.14, 0.05), 0x333333, [-0.08, -0.1, 0]);
       break;
@@ -262,7 +262,7 @@ export function buildProp(style: PropStyle, color: number): THREE.Group {
       break;
     }
     case 'dish': {
-      add(g, new THREE.SphereGeometry(0.24, 16, 8, 0, Math.PI * 2, 0, Math.PI * 0.35), new THREE.MeshToonMaterial({ color: 0xf0f0f0, side: THREE.DoubleSide }), [0, 0, 0], [0, 0, -Math.PI / 2]);
+      add(g, new THREE.SphereGeometry(0.24, 16, 8, 0, Math.PI * 2, 0, Math.PI * 0.35), new THREE.MeshStandardMaterial({ color: 0xf0f0f0, side: THREE.DoubleSide }), [0, 0, 0], [0, 0, -Math.PI / 2]);
       add(g, new THREE.CylinderGeometry(0.01, 0.01, 0.2, 6), 0x777777, [0.1, 0, 0], [0, 0, Math.PI / 2]);
       add(g, new THREE.SphereGeometry(0.04, 8, 6), additive(color, 1), [0.2, 0, 0]);
       break;

@@ -15,8 +15,23 @@ app.start();
 
 // Test hook, only active with ?debug in the URL.
 if (new URLSearchParams(location.search).has('debug')) {
+  // Headless test browsers render slowly; never let auto-quality kick in there.
+  app.renderer.autoQuality = false;
   (window as unknown as Record<string, unknown>).skfDebug = {
     app,
+    /** Stands the given MKs in a row for model inspection. */
+    lineup(ids: string[], stage = 'plenum', pose: 'guard' | 'victory' | 'intro' = 'guard', facing = 1) {
+      app.renderer.setStage(STAGE_BY_ID[stage]);
+      app.renderer.setShowcase(ids.map((id, i) => ({ def: ROSTER_BY_ID[id], x: (i - (ids.length - 1) / 2) * 1.1, facing, pose })), false);
+    },
+    camera(pos: [number, number, number], look: [number, number, number]) {
+      app.renderer.snapCamera(pos, look);
+      app.renderer.camera.position.set(...pos);
+      app.renderer.camera.lookAt(...look);
+    },
+    quality(q: 'ultra' | 'high' | 'low') {
+      app.renderer.setQuality(q);
+    },
     fight(p1: string, p2: string, stage = 'plenum', mode: Mode = 'watch') {
       const setup = { mode, p1: ROSTER_BY_ID[p1], p2: ROSTER_BY_ID[p2], stage: STAGE_BY_ID[stage], cpu: [mode === 'watch', mode !== 'versus' && mode !== 'training'] as [boolean, boolean] };
       const s = new FightScreen(app, setup);
@@ -28,7 +43,7 @@ if (new URLSearchParams(location.search).has('debug')) {
     credits: () => CreditsScreen,
     faces: () => ROSTER.map((d) => {
       const f = rawFace(d.id);
-      return { id: d.id, loaded: !!f, detected: !!f?.detected, crop: f?.crop, license: f?.source.license };
+      return { id: d.id, loaded: !!f, detected: !!f?.detected, mesh: !!f?.mesh, skin: f?.skin?.toString(16), crop: f?.crop, license: f?.source.license };
     }),
     move(i: number, which: number | 'ult') {
       const scr = app.screen as FightScreen;

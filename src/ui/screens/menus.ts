@@ -1,6 +1,7 @@
 import { ROSTER } from '../../data/roster';
 import { STAGES, STAGE_BY_ID } from '../../data/stages';
 import { DIFFICULTY_NAMES } from '../../game/ai';
+import { QUALITIES, QUALITY_NAMES } from '../../core/settings';
 import { renderPortraits } from '../../render/portraits';
 import { loadFaces, loadedFaceCount } from '../../render/faces';
 import type { App, Mode, Screen } from '../app';
@@ -43,7 +44,7 @@ export class BootScreen implements Screen {
       this.msg.textContent = 'Fetching MK photos from Wikipedia…';
       loadFaces(ROSTER, (d, t) => {
         this.bar.style.width = `${50 + (d / t) * 50}%`;
-        this.msg.innerHTML = `Fetching MK photos from Wikipedia… ${d}/${t}<br><span style="font-size:13px">Press any button to skip</span>`;
+        this.msg.innerHTML = `Fetching MK photos and scanning faces in 3D… ${d}/${t}<br><span style="font-size:13px">First visit only · press any button to skip</span>`;
       }).then(() => {
         this.done = true;
       });
@@ -200,6 +201,10 @@ export class OptionsScreen implements Screen {
       app.applySettings();
     };
     const times = [30, 60, 99, 0];
+    const cycleQuality = (d: number) => {
+      s.quality = QUALITIES[(QUALITIES.indexOf(s.quality) + d + QUALITIES.length) % QUALITIES.length];
+      app.applySettings();
+    };
     const items = [
       { label: 'CPU Difficulty', value: () => DIFFICULTY_NAMES[s.difficulty], onLeft: () => { s.difficulty = Math.max(0, s.difficulty - 1); app.applySettings(); }, onRight: () => { s.difficulty = Math.min(4, s.difficulty + 1); app.applySettings(); }, desc: 'How tough the CPU opponents are.' },
       { label: 'Rounds to Win', value: () => String(s.roundsToWin), onLeft: () => { s.roundsToWin = Math.max(1, s.roundsToWin - 1); app.applySettings(); }, onRight: () => { s.roundsToWin = Math.min(5, s.roundsToWin + 1); app.applySettings(); } },
@@ -212,7 +217,7 @@ export class OptionsScreen implements Screen {
       { label: 'Show Hitboxes', value: () => (s.showHitboxes ? 'On' : 'Off'), onLeft: () => { s.showHitboxes = !s.showHitboxes; app.applySettings(); }, onRight: () => { s.showHitboxes = !s.showHitboxes; app.applySettings(); } },
       { label: 'Input Display', value: () => (s.inputDisplay ? 'On' : 'Off'), onLeft: () => { s.inputDisplay = !s.inputDisplay; app.applySettings(); }, onRight: () => { s.inputDisplay = !s.inputDisplay; app.applySettings(); } },
       { label: 'Faces', value: () => (s.faces === 'photo' ? 'Photos' : 'Cartoon'), onLeft: () => this.toggleFaces(), onRight: () => this.toggleFaces(), desc: 'Photos: real MK faces from Wikipedia (free-licensed). Cartoon: procedural caricatures.' },
-      { label: 'Graphics Quality', value: () => (s.quality === 'high' ? 'High' : 'Low'), onLeft: () => { s.quality = s.quality === 'high' ? 'low' : 'high'; app.applySettings(); }, onRight: () => { s.quality = s.quality === 'high' ? 'low' : 'high'; app.applySettings(); }, desc: 'Low disables shadows and high-DPI rendering for integrated graphics.' },
+      { label: 'Graphics Quality', value: () => QUALITY_NAMES[s.quality], onLeft: () => cycleQuality(-1), onRight: () => cycleQuality(1), desc: 'Ultra: ambient occlusion, bloom and anti-aliasing. High: no ambient occlusion. Low: for integrated graphics. Drops automatically if the frame rate suffers.' },
       { label: 'Toggle Fullscreen', onSelect: () => app.toggleFullscreen(), desc: 'Or press F11.' },
       { label: 'Back', onSelect: () => this.back() },
     ];

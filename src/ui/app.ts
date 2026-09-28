@@ -50,7 +50,7 @@ export class App {
   arcade: ArcadeState | null = null;
   lastSetup: FightSetup | null = null;
   desktop: DesktopBridge | null = (window as unknown as { skfDesktop?: DesktopBridge }).skfDesktop ?? null;
-  private quality: Settings['quality'] = 'high';
+  private quality: Settings['quality'] | null = null;
   private acc = 0;
   private last = 0;
   fps = 0;
