@@ -5,11 +5,13 @@ import type { CharacterDef } from '../game/characterTypes';
 import { PARTIES } from '../data/parties';
 import { applyStaticPose } from './animator';
 import { buildCharacter, disposeRig } from './characterModel';
+import { facePortrait } from './faces';
 
 const cache = new Map<string, string>();
 
+/** Photo portrait when available, otherwise the rendered cartoon portrait. */
 export function getPortrait(id: string): string | undefined {
-  return cache.get(id);
+  return facePortrait(id) ?? cache.get(id);
 }
 
 export async function renderPortraits(defs: CharacterDef[], onProgress?: (done: number, total: number) => void): Promise<void> {

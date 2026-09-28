@@ -29,6 +29,8 @@ export interface Rig {
   materials: THREE.MeshToonMaterial[];
   headRadius: number;
   def: CharacterDef;
+  /** Photo "bobble-head" when a real photo face is available. */
+  faceSprite: THREE.Sprite | null;
 }
 
 interface Builder {
@@ -80,7 +82,7 @@ function group(parent: THREE.Object3D, pos: [number, number, number] = [0, 0, 0]
 
 const capsule = (r: number, len: number) => new THREE.CapsuleGeometry(r, Math.max(0.001, len), 5, 12);
 
-export function buildCharacter(def: CharacterDef, opts: { outline?: boolean } = {}): Rig {
+export function buildCharacter(def: CharacterDef, opts: { outline?: boolean; face?: THREE.Texture | null } = {}): Rig {
   const look = def.look;
   const party = PARTIES[def.party];
   const b: Builder = { mats: [], matCache: new Map(), outline: opts.outline === false ? 0 : 0.012 };
@@ -195,7 +197,18 @@ export function buildCharacter(def: CharacterDef, opts: { outline?: boolean } = 
   }
   const head = group(neck, [0, 0.1, 0]);
   const R_ = 0.15 * (look.head ?? 1);
-  buildHead(b, head, look, R_, skin, skinDark, hairM);
+  let faceSprite: THREE.Sprite | null = null;
+  if (opts.face) {
+    // Real photo face on a camera-facing card: a big-head parody look that stays recognisable.
+    const mat = new THREE.SpriteMaterial({ map: opts.face, transparent: true, alphaTest: 0.06, toneMapped: false, depthWrite: true });
+    faceSprite = new THREE.Sprite(mat);
+    const s = look.head ?? 1;
+    faceSprite.scale.set(0.5 * s, 0.625 * s, 1);
+    faceSprite.position.set(0, 0.2, 0.04);
+    head.add(faceSprite);
+  } else {
+    buildHead(b, head, look, R_, skin, skinDark, hairM);
+  }
 
   const rig: Rig = {
     root, pivot, hips, spine, chest, neck, head,
@@ -204,6 +217,7 @@ export function buildCharacter(def: CharacterDef, opts: { outline?: boolean } = 
     materials: b.mats,
     headRadius: R_,
     def,
+    faceSprite,
   };
   return rig;
 }
@@ -446,5 +460,7 @@ export function disposeRig(rig: Rig): void {
       mesh.geometry.dispose();
     }
   });
+  // The face texture is shared and cached, so only the sprite material is disposed.
+  (rig.faceSprite?.material as THREE.SpriteMaterial | undefined)?.dispose();
   for (const m of rig.materials) m.dispose();
 }

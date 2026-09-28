@@ -10,6 +10,7 @@ export interface Settings {
   showHitboxes: boolean;
   inputDisplay: boolean;
   quality: 'high' | 'low';
+  faces: 'photo' | 'cartoon';
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -24,6 +25,7 @@ export const DEFAULT_SETTINGS: Settings = {
   showHitboxes: false,
   inputDisplay: false,
   quality: 'high',
+  faces: 'photo',
 };
 
 const KEY = 'skf.settings';

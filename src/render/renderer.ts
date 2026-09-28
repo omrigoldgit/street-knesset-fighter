@@ -14,6 +14,7 @@ import { Effects } from './effects';
 import { additive } from './materials';
 import { buildProp } from './props';
 import { buildStage, disposeStage, type BuiltStage } from './stage';
+import { faceTexture } from './faces';
 
 const FACE_ANGLE = Math.PI / 2 - 0.32;
 const PROP_ANIMS = new Set(['cast', 'grab', 'charge', 'whip', 'beam', 'counterStance', 'place', 'uppercut', 'summon', 'stomp', 'flurry', 'slamRise']);
@@ -31,7 +32,7 @@ class FighterView {
   private auraTimer = 0;
 
   constructor(def: CharacterDef) {
-    this.rig = buildCharacter(def);
+    this.rig = buildCharacter(def, { face: faceTexture(def.id) });
     this.aura = new THREE.Mesh(new THREE.CapsuleGeometry(0.5, 1.1, 6, 16), additive(0xffffff, 0.18));
     this.aura.position.y = 0.95;
     this.aura.visible = false;
@@ -52,6 +53,15 @@ class FighterView {
     this.whip.visible = false;
     this.rig.root.add(this.whip);
     this.yaw = FACE_ANGLE;
+  }
+
+  /** Photo heads always face the camera, so roll them to follow the body (knockdowns, hit tilts). */
+  syncFace(flash: number, facing: number, wobble: number): void {
+    const s = this.rig.faceSprite;
+    if (!s) return;
+    const mat = s.material as THREE.SpriteMaterial;
+    mat.rotation = -this.anim.pivotX * facing + this.anim.headRoll * 0.6 * facing + wobble;
+    mat.color.setRGB(1, 1 - flash * 0.45, 1 - flash * 0.5);
   }
 
   setProp(style: PropStyle | null, color: number): void {
@@ -99,6 +109,8 @@ class FighterView {
         mat.emissive.setRGB(0, 0, 0);
       }
     }
+    this.syncFace(flash, f.facing, f.state === 'hitstun' || f.state === 'cinematic' ? Math.sin(t * 40) * 0.15 : 0);
+
     // Aura: rising particles instead of a solid shell.
     this.aura.visible = false;
     const auraColor = buff?.color ?? (f.state === 'attack' && f.move?.kind === 'super' ? f.move.color ?? 0xffd200 : f.meter >= 100 ? 0xffd200 : null);

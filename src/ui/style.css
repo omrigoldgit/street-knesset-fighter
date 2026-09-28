@@ -328,3 +328,30 @@ html, body {
   .hp-port { width: 48px; height: 48px; }
   .timer { font-size: 44px; }
 }
+
+/* ---------------------------------------------------------------- face editor & credits */
+
+.fe-wrap { display: flex; gap: 22px; align-items: flex-start; flex-wrap: wrap; }
+.fe-grid { display: grid; grid-template-columns: repeat(8, 64px); gap: 4px; --cell: 64px; }
+.fe-grid .cs-cell { width: 64px; height: 64px; }
+.fe-panel { flex: 1; min-width: 520px; padding: 16px 20px; border-width: 2px; }
+.fe-panel.focused { border-color: var(--gold); }
+.fe-title { font-size: 34px; }
+.fe-info { color: var(--muted); font-size: 14px; margin: 4px 0 10px; }
+.fe-info a { color: var(--sky); }
+.fe-row { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+.fe-canvas { width: min(360px, 34vw); height: auto; border-radius: 8px; cursor: grab; touch-action: none; background: #0b1020; }
+.fe-canvas:active { cursor: grabbing; }
+.fe-preview { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+.fe-head { width: 128px; height: 160px; background: repeating-conic-gradient(#1a2240 0% 25%, #232c50 0% 50%) 50% / 16px 16px; border-radius: 8px; }
+.fe-portrait { width: 96px; height: 96px; border-radius: 8px; border: 2px solid #fff; }
+.fe-buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.fe-buttons button {
+  font: bold 15px var(--body); color: #fff; background: #1f3a78; border: 1px solid #5f84d8; border-radius: 6px;
+  padding: 8px 14px; cursor: pointer;
+}
+.fe-buttons button:hover { background: #2a4d9c; }
+.fe-keys { margin-top: 10px; font-size: 13px; color: var(--muted); }
+.cr-table img.cr-img, .cr-table .cr-img { width: 48px; height: 48px; border-radius: 6px; }
+.cr-table a { color: var(--sky); }
+.cr-table td { font-size: 14px; }

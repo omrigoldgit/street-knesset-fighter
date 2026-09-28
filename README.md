@@ -77,6 +77,14 @@ It uploads a ready-to-run `Street Knesset Fighter` portable `.exe` as an artifac
 **Classic motion inputs work too:** `↓↘→ + P` = Special 1, `↓↙← + K` = Special 2, `→↓↘ + P` = Special 3,
 `↓↘→↓↘→ + P` = Ultimate. Light and heavy buttons give weaker, faster versions or stronger, farther ones.
 
+## Real faces
+
+By default the game loads each MK's **freely licensed lead photo from Wikipedia** (CC BY / CC BY-SA / public domain only)
+in your browser. It detects the face with MediaPipe and puts it on the fighter as a big photo head. Photo credits are in
+**Main menu → Credits**. **Main menu → Faces** lets you fix any crop, upload your own photo (kept in your browser only),
+or switch a single MK back to the cartoon. **Options → Faces → Cartoon** turns photos off entirely. Offline, the game falls back
+to procedural caricatures.
+
 ## Features
 
 - **40 playable MKs** across 13 parties, each with a unique procedural 3D caricature (hair, beards, kippot, hats, glasses, suits, party pin)

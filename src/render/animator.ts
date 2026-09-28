@@ -268,6 +268,16 @@ export class Animator {
     this.spin = 0;
   }
 
+  /** Current body lean (used to roll camera-facing photo heads when lying down). */
+  get pivotX(): number {
+    return this.cur[PIVX];
+  }
+
+  /** Current sideways head tilt plus spine tilt. */
+  get headRoll(): number {
+    return this.cur[14] + this.cur[5];
+  }
+
   update(f: Fighter, m: Match, dt: number): void {
     const t = this.target;
     const time = m.ticks / 60;

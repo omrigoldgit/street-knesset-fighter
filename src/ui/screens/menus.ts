@@ -2,10 +2,12 @@ import { ROSTER } from '../../data/roster';
 import { STAGES, STAGE_BY_ID } from '../../data/stages';
 import { DIFFICULTY_NAMES } from '../../game/ai';
 import { renderPortraits } from '../../render/portraits';
+import { loadFaces, loadedFaceCount } from '../../render/faces';
 import type { App, Mode, Screen } from '../app';
 import { MenuList, el } from '../dom';
 import { CharSelectScreen } from './select';
 import { ControlsScreen, MoveListScreen } from './info';
+import { CreditsScreen, FaceEditorScreen } from './faces';
 
 const MENU_MUSIC = { bpm: 108, root: 50, mode: 'dorian' as const, intensity: 0.5 };
 
@@ -13,30 +15,49 @@ function pick<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
-/** Renders portraits with a progress bar, then shows the title. */
+/** Renders cartoon portraits, fetches the MKs' photos, then shows the title. */
 export class BootScreen implements Screen {
   private bar!: HTMLElement;
+  private msg!: HTMLElement;
   private done = false;
+  private photosStarted = 0;
+  private ticks = 0;
 
   constructor(private app: App) {}
 
   enter(): void {
     const w = el('div', 'loading');
     w.innerHTML = `<div class="logo"><span class="l1">Street</span><span class="l2">Knesset</span><span class="l3">Fighter</span></div>
-      <div class="bar"><i style="width:0%"></i></div><div style="color:var(--muted)">Drafting 40 members of Knesset…</div>`;
+      <div class="bar"><i style="width:0%"></i></div><div class="boot-msg" style="color:var(--muted);text-align:center">Drafting 40 members of Knesset…</div>`;
     this.app.ui.appendChild(w);
     this.bar = w.querySelector('.bar i') as HTMLElement;
+    this.msg = w.querySelector('.boot-msg') as HTMLElement;
     renderPortraits(ROSTER, (d, t) => {
-      this.bar.style.width = `${(d / t) * 100}%`;
+      this.bar.style.width = `${(d / t) * 50}%`;
     }).then(() => {
-      this.done = true;
+      if (this.app.settings.faces !== 'photo') {
+        this.done = true;
+        return;
+      }
+      this.photosStarted = this.ticks;
+      this.msg.textContent = 'Fetching MK photos from Wikipedia…';
+      loadFaces(ROSTER, (d, t) => {
+        this.bar.style.width = `${50 + (d / t) * 50}%`;
+        this.msg.innerHTML = `Fetching MK photos from Wikipedia… ${d}/${t}<br><span style="font-size:13px">Press any button to skip</span>`;
+      }).then(() => {
+        this.done = true;
+      });
     });
   }
 
   exit(): void {}
 
   tick(): void {
-    if (this.done) this.app.go(new TitleScreen(this.app));
+    this.ticks++;
+    // Photos keep loading in the background if the player skips or the network is slow.
+    const waited = this.photosStarted ? this.ticks - this.photosStarted : 0;
+    const skip = this.photosStarted > 0 && waited > 60 && this.app.input.anyPressed();
+    if (this.done || skip || waited > 60 * 45) this.app.go(new TitleScreen(this.app));
   }
 
   frame(): void {}
@@ -123,6 +144,8 @@ export class MainMenuScreen implements Screen {
       { label: 'CPU vs CPU', desc: 'Sit back and watch two CPUs debate.', onSelect: start('watch') },
       { label: 'Move Lists', desc: 'Every special move, ultimate and passive for all 40 fighters.', onSelect: () => app.go(new MoveListScreen(app, 0, () => app.go(new MainMenuScreen(app)))) },
       { label: 'Controls', desc: 'PS5 DualSense and keyboard layouts, controller assignment and remapping.', onSelect: () => app.go(new ControlsScreen(app, () => app.go(new MainMenuScreen(app)))) },
+      { label: 'Faces', desc: 'Adjust any MK’s photo crop, or upload your own photo.', onSelect: () => app.go(new FaceEditorScreen(app, () => app.go(new MainMenuScreen(app)))) },
+      { label: 'Credits', desc: 'Photo credits and licences.', onSelect: () => app.go(new CreditsScreen(app, () => app.go(new MainMenuScreen(app)))) },
       { label: 'Options', desc: 'Difficulty, rounds, timer, audio and more.', onSelect: () => app.go(new OptionsScreen(app, () => app.go(new MainMenuScreen(app)))) },
     ];
     if (app.desktop) items.push({ label: 'Quit', desc: 'Exit to desktop.', onSelect: () => app.desktop!.quit() });
@@ -162,6 +185,13 @@ export class OptionsScreen implements Screen {
   private menu!: MenuList;
   constructor(private app: App, private back: () => void) {}
 
+  private toggleFaces(): void {
+    const s = this.app.settings;
+    s.faces = s.faces === 'photo' ? 'cartoon' : 'photo';
+    this.app.applySettings();
+    if (s.faces === 'photo' && loadedFaceCount() === 0) void loadFaces(ROSTER);
+  }
+
   enter(): void {
     const app = this.app;
     const s = app.settings;
@@ -181,6 +211,7 @@ export class OptionsScreen implements Screen {
       { label: 'Controller Rumble', value: () => (s.rumble ? 'On' : 'Off'), onLeft: () => { s.rumble = !s.rumble; app.applySettings(); }, onRight: () => { s.rumble = !s.rumble; app.applySettings(); }, desc: 'DualSense vibration on hits (Chrome / Edge / desktop app).' },
       { label: 'Show Hitboxes', value: () => (s.showHitboxes ? 'On' : 'Off'), onLeft: () => { s.showHitboxes = !s.showHitboxes; app.applySettings(); }, onRight: () => { s.showHitboxes = !s.showHitboxes; app.applySettings(); } },
       { label: 'Input Display', value: () => (s.inputDisplay ? 'On' : 'Off'), onLeft: () => { s.inputDisplay = !s.inputDisplay; app.applySettings(); }, onRight: () => { s.inputDisplay = !s.inputDisplay; app.applySettings(); } },
+      { label: 'Faces', value: () => (s.faces === 'photo' ? 'Photos' : 'Cartoon'), onLeft: () => this.toggleFaces(), onRight: () => this.toggleFaces(), desc: 'Photos: real MK faces from Wikipedia (free-licensed). Cartoon: procedural caricatures.' },
       { label: 'Graphics Quality', value: () => (s.quality === 'high' ? 'High' : 'Low'), onLeft: () => { s.quality = s.quality === 'high' ? 'low' : 'high'; app.applySettings(); }, onRight: () => { s.quality = s.quality === 'high' ? 'low' : 'high'; app.applySettings(); }, desc: 'Low disables shadows and high-DPI rendering for integrated graphics.' },
       { label: 'Toggle Fullscreen', onSelect: () => app.toggleFullscreen(), desc: 'Or press F11.' },
       { label: 'Back', onSelect: () => this.back() },

@@ -5,6 +5,7 @@ import type { CharacterDef } from '../game/characterTypes';
 import type { StageDef } from '../data/stages';
 import { FPS } from '../game/constants';
 import { GameRenderer } from '../render/renderer';
+import { setFaceMode } from '../render/faces';
 
 export interface Screen {
   enter(): void;
@@ -78,6 +79,7 @@ export class App {
     this.audio.applyVolumes();
     this.input.rumbleEnabled = s.rumble;
     this.renderer.showHitboxes = s.showHitboxes;
+    setFaceMode(s.faces);
     if (this.quality !== s.quality) {
       this.quality = s.quality;
       this.renderer.setQuality(s.quality);

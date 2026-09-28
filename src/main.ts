@@ -2,7 +2,9 @@ import './ui/style.css';
 import { App } from './ui/app';
 import { BootScreen } from './ui/screens/menus';
 import { FightScreen } from './ui/screens/fight';
-import { ROSTER_BY_ID } from './data/roster';
+import { ROSTER, ROSTER_BY_ID } from './data/roster';
+import { rawFace } from './render/faces';
+import { CreditsScreen, FaceEditorScreen } from './ui/screens/faces';
 import { STAGE_BY_ID } from './data/stages';
 import type { Mode } from './ui/app';
 
@@ -21,6 +23,12 @@ if (new URLSearchParams(location.search).has('debug')) {
       return s;
     },
     screen: () => app.screen,
+    editor: () => FaceEditorScreen,
+    credits: () => CreditsScreen,
+    faces: () => ROSTER.map((d) => {
+      const f = rawFace(d.id);
+      return { id: d.id, loaded: !!f, detected: !!f?.detected, crop: f?.crop, license: f?.source.license };
+    }),
     move(i: number, which: number | 'ult') {
       const scr = app.screen as FightScreen;
       const f = scr.match.fighters[i];
