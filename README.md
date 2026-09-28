@@ -10,7 +10,12 @@ out of the box. Keyboard works too.
 
 ---
 
-## Play now (no install)
+## ▶ Play in your browser
+
+**https://omrigoldgit.github.io/street-knesset-fighter/**. Open it in Chrome or Edge, click once to enable sound,
+and press any button on your PS5 controller. Every push to this branch redeploys it automatically.
+
+## Play locally (no install)
 
 Requires only [Node.js](https://nodejs.org) 20+. The prebuilt game is in `dist/`, so there is **no `npm install`**.
 That also sidesteps Windows *Smart App Control*, which can block the build tools' native binaries.
