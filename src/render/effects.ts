@@ -21,6 +21,7 @@ interface Ring {
   from: number;
   to: number;
   active: boolean;
+  flat: boolean;
 }
 
 const MAX_PARTICLES = 900;
@@ -52,13 +53,13 @@ export class Effects {
       (m.material as THREE.MeshBasicMaterial).side = THREE.DoubleSide;
       m.visible = false;
       this.group.add(m);
-      this.rings.push({ mesh: m, life: 0, max: 1, from: 0, to: 1, active: false });
+      this.rings.push({ mesh: m, life: 0, max: 1, from: 0, to: 1, active: false, flat: false });
     }
     for (let i = 0; i < 12; i++) {
       const m = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), additive(0xffffff, 1));
       m.visible = false;
       this.group.add(m);
-      this.flashes.push({ mesh: m, life: 0, max: 1, from: 0, to: 1, active: false });
+      this.flashes.push({ mesh: m, life: 0, max: 1, from: 0, to: 1, active: false, flat: true });
     }
   }
 
@@ -80,7 +81,7 @@ export class Effects {
         x, y, z,
         vx: Math.sin(ph) * Math.cos(th) * s,
         vy: Math.cos(ph) * s + speed * 0.3,
-        vz: Math.sin(ph) * Math.sin(th) * s * 0.6,
+        vz: Math.sin(ph) * Math.sin(th) * s,
         life: life * (0.6 + Math.random() * 0.6),
         max: life,
         size: size * (0.6 + Math.random() * 0.8),
@@ -100,6 +101,7 @@ export class Effects {
     r.to = to;
     r.mesh.visible = true;
     r.mesh.position.set(x, y, z);
+    r.flat = flat;
     r.mesh.rotation.set(flat ? -Math.PI / 2 : 0, 0, 0);
     (r.mesh.material as THREE.MeshBasicMaterial).color.set(color);
   }
@@ -131,7 +133,8 @@ export class Effects {
     this.ring(x, y, z, base, 0.1, kind === 'light' ? 0.6 : kind === 'super' ? 1.8 : 1.1, kind === 'light' ? 10 : 16);
   }
 
-  update(dt: number): void {
+  /** Advances particles; upright shock rings turn to face the camera. */
+  update(dt: number, camera?: THREE.Camera): void {
     const k = Math.min(3, dt * 60);
     let i = 0;
     const ps = this.particles;
@@ -182,6 +185,7 @@ export class Effects {
         continue;
       }
       const t = 1 - r.life / r.max;
+      if (!r.flat && camera) r.mesh.quaternion.copy(camera.quaternion);
       r.mesh.scale.setScalar(r.from + (r.to - r.from) * (1 - (1 - t) * (1 - t)));
       (r.mesh.material as THREE.MeshBasicMaterial).opacity = 1 - t;
     }

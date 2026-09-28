@@ -104,10 +104,13 @@ html, body {
 .pads-status b { color: #fff; }
 
 .mainmenu { position: absolute; left: 6vw; top: 50%; transform: translateY(-50%); width: min(520px, 60vw); }
-.mainmenu .logo { text-align: left; margin-bottom: 30px; }
-.mainmenu .logo .l1 { font-size: clamp(26px, 3vw, 44px); }
-.mainmenu .logo .l2 { font-size: clamp(36px, 4.5vw, 64px); }
-.mainmenu .logo .l3 { font-size: clamp(22px, 2.4vw, 34px); }
+.mainmenu .logo { text-align: left; margin-bottom: min(30px, 3vh); }
+.mainmenu .logo .l1 { font-size: clamp(20px, min(3vw, 5vh), 44px); }
+.mainmenu .logo .l2 { font-size: clamp(28px, min(4.5vw, 7.5vh), 64px); }
+.mainmenu .logo .l3 { font-size: clamp(18px, min(2.4vw, 4vh), 34px); }
+/* Nine entries: size them by viewport height so the logo never gets pushed off-screen. */
+.mainmenu .menu { gap: min(8px, 0.9vh); }
+.mainmenu .menu .item { font-size: clamp(16px, min(2.6vw, 4.4vh), 36px); padding-top: min(6px, 0.6vh); padding-bottom: min(6px, 0.6vh); }
 
 /* ---------------------------------------------------------------- character select */
 
@@ -220,6 +223,8 @@ html, body {
 @keyframes shimmer { to { background-position: -200% 0; } }
 .meter-label { font: bold 13px var(--body); margin-bottom: 4px; color: #b8c8ff; letter-spacing: 0.1em; text-shadow: 0 1px 3px #000; }
 .meter-label.full { color: var(--gold); }
+.meter-label.rage { color: #ff5a3a; animation: pulse 0.5s infinite alternate; }
+.hp .fill.rage { background: linear-gradient(180deg, #ffb07a, #ff2a1a 50%, #8a0000); box-shadow: inset 0 0 10px #ffea00; animation: pulse 0.35s infinite alternate; }
 .buffs { font-size: 12px; margin-bottom: 4px; min-height: 16px; color: #ffe9a8; text-shadow: 0 1px 3px #000; }
 
 .announce {

@@ -7,6 +7,11 @@ import { PARTIES } from '../data/parties';
 import { OUTLINE_MAT, inflate, shade, toon } from './materials';
 
 export const HIP_H = 0.95;
+/** Hip joint → knee, and knee → ankle, in model units (used by the leg IK). */
+export const THIGH_LEN = 0.45;
+export const SHIN_LEN = 0.44;
+/** Ankle height above the sole. */
+export const ANKLE_H = 0.035;
 
 export interface Rig {
   root: THREE.Group;
@@ -26,6 +31,8 @@ export interface Rig {
   lKnee: THREE.Group;
   rHip: THREE.Group;
   rKnee: THREE.Group;
+  lFoot: THREE.Group;
+  rFoot: THREE.Group;
   materials: THREE.MeshToonMaterial[];
   headRadius: number;
   def: CharacterDef;
@@ -118,10 +125,12 @@ export function buildCharacter(def: CharacterDef, opts: { outline?: boolean; fac
   const buildLeg = (side: 1 | -1) => {
     const hip = group(hips, [side * 0.095 * bw, -0.05, 0]);
     part(b, hip, capsule(0.082 * limb, 0.3), legMat, [0, -0.22, 0]);
-    const knee = group(hip, [0, -0.45, 0]);
+    const knee = group(hip, [0, -THIGH_LEN, 0]);
     part(b, knee, capsule(0.068 * limb, 0.3), legMat, [0, -0.21, 0]);
-    part(b, knee, new THREE.BoxGeometry(0.11, 0.07, 0.25), shoes, [0, -0.44, 0.05]);
-    return { hip, knee };
+    // Ankle joint so planted feet can stay flat on the floor.
+    const foot = group(knee, [0, -SHIN_LEN, 0]);
+    part(b, foot, new THREE.BoxGeometry(0.11, 0.07, 0.25), shoes, [0, 0, 0.05]);
+    return { hip, knee, foot };
   };
   const L = buildLeg(1);
   const R = buildLeg(-1);
@@ -213,7 +222,7 @@ export function buildCharacter(def: CharacterDef, opts: { outline?: boolean; fac
   const rig: Rig = {
     root, pivot, hips, spine, chest, neck, head,
     lSh: LA.sh, lEl: LA.el, rSh: RA.sh, rEl: RA.el, lHand: LA.hand, rHand: RA.hand,
-    lHip: L.hip, lKnee: L.knee, rHip: R.hip, rKnee: R.knee,
+    lHip: L.hip, lKnee: L.knee, rHip: R.hip, rKnee: R.knee, lFoot: L.foot, rFoot: R.foot,
     materials: b.mats,
     headRadius: R_,
     def,

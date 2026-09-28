@@ -1,22 +1,26 @@
-// Fighter: state machine, input interpretation and physics for one combatant.
+// Fighter: Tekken-style 3D state machine, input interpretation and physics for one combatant.
+// Fighters live on the (x, z) ground plane, face each other with a finite turn rate, and attacks
+// commit to a direction, so sidesteps make linear moves whiff.
 
 import type { CharacterDef } from './characterTypes';
 import {
-  BASE_HEALTH, GETUP_FRAMES, GRAVITY, KNOCKDOWN_FRAMES, MAX_METER, ULT_COST,
+  BASE_HEALTH, GETUP_FRAMES, GRAVITY, JUGGLE_GRAVITY, JUGGLE_LIMIT, JUGGLE_VY_SCALE, KNOCKDOWN_MAX, KNOCKDOWN_MIN,
+  MAX_METER, RAGE_THRESHOLD, TECHROLL_FRAMES, ULT_COST,
 } from './constants';
-import { InputHistory, isBack, isDown, isForward, isUp, toRelative } from './motion';
+import { InputHistory, isBack, isDown, isUp, toRelative } from './motion';
 import { buildNormals, buildThrow, type NormalId } from './normals';
 import { buildSpecial, buildUltimate } from './specials';
 import {
   ATTACKS, BTN, KICKS, NO_INPUT, PUNCHES,
-  type Box, type Buff, type BuffKind, type GuardType, type InvulnKind, type MoveCtx, type MoveDef, type PlayerInput,
+  type Box, type Buff, type BuffKind, type Cyl, type GuardType, type InvulnKind, type MoveCtx, type MoveDef, type PlayerInput,
 } from './types';
+import { leftOf, turnToward, wrapAngle, type V2 } from './vec';
 import type { Match } from './match';
 
 export type FState =
-  | 'intro' | 'idle' | 'walkF' | 'walkB' | 'crouch' | 'jumpSquat' | 'air' | 'land' | 'dash'
-  | 'attack' | 'fall' | 'hitstun' | 'juggle' | 'blockstun' | 'dizzy' | 'knockdown' | 'getup'
-  | 'thrown' | 'sidestep' | 'ko' | 'victory' | 'cinematic';
+  | 'intro' | 'idle' | 'walkF' | 'walkB' | 'crouch' | 'jumpSquat' | 'air' | 'land' | 'dash' | 'run'
+  | 'backdash' | 'sidestep' | 'sidewalk' | 'attack' | 'fall' | 'hitstun' | 'juggle' | 'blockstun'
+  | 'dizzy' | 'knockdown' | 'getup' | 'techroll' | 'wallsplat' | 'thrown' | 'ko' | 'victory' | 'cinematic';
 
 export interface MoveSet {
   normals: Record<NormalId, MoveDef>;
@@ -30,6 +34,7 @@ export interface FighterStats {
   walk: number;
   back: number;
   dash: number;
+  run: number;
   jumpVy: number;
   jumpVx: number;
   gravity: number;
@@ -74,11 +79,12 @@ export function computeStats(def: CharacterDef): FighterStats {
   const weight = s.weight ?? 1;
   return {
     maxHealth: Math.round(BASE_HEALTH * (s.health ?? 1) * (def.style === 'grappler' ? 1.08 : 1) * (def.boss ? 1.5 : 1)),
-    walk: 0.052 * speed,
-    back: 0.042 * speed,
-    dash: 0.16 * speed,
+    walk: 0.042 * speed,
+    back: 0.034 * speed,
+    dash: 0.15 * speed,
+    run: 0.1 * speed,
     jumpVy: 0.3 * (s.jump ?? 1),
-    jumpVx: 0.07 * speed,
+    jumpVx: 0.06 * speed,
     gravity: GRAVITY * (0.94 + 0.06 * weight),
     dmgMul: (s.power ?? 1) * (def.boss ? 1.15 : 1),
     defMul: (1 / (s.defense ?? 1)) * (def.passive.id === 'thickSkin' ? 0.86 : 1),
@@ -104,12 +110,18 @@ export class Fighter {
   stats: FighterStats;
   opponent: Fighter | null = null;
 
+  // World position (ground plane x/z, height y) and velocity.
   x = 0;
   y = 0;
   z = 0;
   vx = 0;
   vy = 0;
-  slideVx = 0;
+  vz = 0;
+  slideX = 0;
+  slideZ = 0;
+  /** Facing angle on the ground plane: direction (cos yaw, sin yaw). */
+  yaw = 0;
+  /** Screen-relative facing sign (+1 = opponent to the right on screen), used for input. */
   facing = 1;
 
   state: FState = 'idle';
@@ -122,6 +134,7 @@ export class Fighter {
   moveLastHit = -99;
   moveConnected = false;
   moveHitConfirmed = false;
+  pendingString: MoveDef | null = null;
   armorLeft = 0;
   fallMove: MoveDef | null = null;
   landLag = 0;
@@ -133,7 +146,14 @@ export class Fighter {
   airJumps = 0;
   airAttackUsed = false;
   dashDir = 0;
+  /** Lateral direction of the current sidestep in world space. */
+  sideX = 0;
+  sideZ = 0;
+  /** +1 toward the camera, -1 into the background (for animation). */
   sidestepDir = -1;
+  /** Frames left in the "while standing" window after leaving a crouch. */
+  wsFrames = 0;
+  private crouchEnteredFromStand = false;
 
   health: number;
   recoverable = 0;
@@ -142,10 +162,13 @@ export class Fighter {
   stun = 0;
   juggleCount = 0;
   juggleInvuln = false;
+  screwed = false;
   comboHits = 0;
   comboDamage = 0;
   invuln = 0;
   lifelineUsed = false;
+  rageArtUsed = false;
+  rageAnnounced = false;
   koed = false;
   pendingDizzy = 0;
   buffs: Buff[] = [];
@@ -155,14 +178,22 @@ export class Fighter {
   input: PlayerInput = NO_INPUT;
   relDir = 5;
   roundsWon = 0;
+  /**
+   * Suppresses the automatic Tekken guard (standing still blocks highs and mids). Set by the CPU
+   * when it fails its reaction roll and by training dummies that should take hits.
+   */
+  noGuard = false;
 
   // Presentation helpers read by the renderer.
   flash = 0;
   guarding = false;
   hitHigh = true;
   lastHitHeavy = false;
-  knockdownFrames = KNOCKDOWN_FRAMES;
+  crumpled = false;
+  knockdownFrames = KNOCKDOWN_MAX;
   victoryVariant = 0;
+  /** Accumulated spin for screw / spin-out animations. */
+  spin = 0;
 
   constructor(index: number, def: CharacterDef) {
     this.index = index;
@@ -170,6 +201,69 @@ export class Fighter {
     this.moves = getMoveSet(def);
     this.stats = computeStats(def);
     this.health = this.stats.maxHealth;
+  }
+
+  // ---------------------------------------------------------------- geometry
+
+  get dirX(): number {
+    return Math.cos(this.yaw);
+  }
+
+  get dirZ(): number {
+    return Math.sin(this.yaw);
+  }
+
+  get dir(): V2 {
+    return { x: Math.cos(this.yaw), z: Math.sin(this.yaw) };
+  }
+
+  /** Point `d` units in front of the fighter. */
+  ahead(d: number): V2 {
+    return { x: this.x + Math.cos(this.yaw) * d, z: this.z + Math.sin(this.yaw) * d };
+  }
+
+  setForward(speed: number): void {
+    this.vx = Math.cos(this.yaw) * speed;
+    this.vz = Math.sin(this.yaw) * speed;
+  }
+
+  /** Position of a world point in this fighter's frame: f = forward, l = left. */
+  localOf(px: number, pz: number): { f: number; l: number } {
+    const dx = px - this.x;
+    const dz = pz - this.z;
+    const d = this.dir;
+    const L = leftOf(d);
+    return { f: dx * d.x + dz * d.z, l: dx * L.x + dz * L.z };
+  }
+
+  distTo(o: Fighter): number {
+    return Math.hypot(o.x - this.x, o.z - this.z);
+  }
+
+  yawToward(px: number, pz: number): number {
+    return Math.atan2(pz - this.z, px - this.x);
+  }
+
+  turnToOpponent(rate: number): void {
+    const o = this.opponent;
+    if (!o) return;
+    if (Math.hypot(o.x - this.x, o.z - this.z) < 0.05) return;
+    this.yaw = turnToward(this.yaw, this.yawToward(o.x, o.z), rate);
+  }
+
+  faceToward(x: number, z = this.z): void {
+    if (Math.hypot(x - this.x, z - this.z) > 0.02) this.yaw = this.yawToward(x, z);
+  }
+
+  faceOpponent(): void {
+    if (this.opponent) this.faceToward(this.opponent.x, this.opponent.z);
+  }
+
+  /** How far this fighter is facing away from the opponent (radians). */
+  offAxis(): number {
+    const o = this.opponent;
+    if (!o) return 0;
+    return Math.abs(wrapAngle(this.yawToward(o.x, o.z) - this.yaw));
   }
 
   get grounded(): boolean {
@@ -180,9 +274,13 @@ export class Fighter {
     return this.def.passive.id;
   }
 
+  get inRage(): boolean {
+    return this.health > 0 && this.health < this.stats.maxHealth * RAGE_THRESHOLD;
+  }
+
   get isCrouching(): boolean {
     if (this.state === 'crouch') return true;
-    if ((this.state === 'blockstun' || this.state === 'hitstun') && this.relDir === 1 && this.grounded) return true;
+    if ((this.state === 'blockstun' || this.state === 'hitstun') && isDown(this.relDir) && this.grounded) return true;
     if (this.state === 'attack' && this.move?.lowProfile) return true;
     return false;
   }
@@ -191,15 +289,16 @@ export class Fighter {
     return this.state === 'idle' || this.state === 'walkF' || this.state === 'walkB' || this.state === 'crouch';
   }
 
-  resetForRound(x: number, facing: number): void {
+  resetForRound(x: number, z: number, yaw: number): void {
     this.x = x;
+    this.z = z;
     this.y = 0;
-    this.z = 0;
-    this.vx = this.vy = this.slideVx = 0;
-    this.facing = facing;
+    this.vx = this.vy = this.vz = this.slideX = this.slideZ = 0;
+    this.yaw = yaw;
     this.state = 'idle';
     this.stateFrame = 0;
     this.move = null;
+    this.pendingString = null;
     this.fallMove = null;
     this.throwExec = null;
     this.grabbedBy = null;
@@ -208,15 +307,22 @@ export class Fighter {
     this.stun = 0;
     this.juggleCount = 0;
     this.juggleInvuln = false;
+    this.screwed = false;
     this.comboHits = 0;
     this.comboDamage = 0;
     this.invuln = 0;
+    this.rageArtUsed = false;
+    this.rageAnnounced = false;
+    this.crumpled = false;
     this.buffs = [];
     this.pendingDizzy = 0;
+    this.wsFrames = 0;
+    this.spin = 0;
     this.cooldowns.clear();
     this.history.clear();
     this.flash = 0;
     this.guarding = false;
+    this.noGuard = false;
     if (this.passive === 'deepPockets') this.meter = Math.max(this.meter, 50);
   }
 
@@ -225,14 +331,6 @@ export class Fighter {
       this.state = s;
       this.stateFrame = 0;
     }
-  }
-
-  faceToward(x: number): void {
-    if (Math.abs(x - this.x) > 0.02) this.facing = x > this.x ? 1 : -1;
-  }
-
-  faceOpponent(): void {
-    if (this.opponent) this.faceToward(this.opponent.x);
   }
 
   ctx(m: Match): MoveCtx {
@@ -247,7 +345,7 @@ export class Fighter {
     this.history.push(this.relDir, input.pressed);
   }
 
-  // ---------------------------------------------------------------- buffs
+  // ---------------------------------------------------------------- buffs & damage
 
   addBuff(kind: BuffKind, value: number, frames: number, color: number, m?: Match): void {
     this.buffs = this.buffs.filter((b) => b.kind !== kind);
@@ -272,6 +370,7 @@ export class Fighter {
     let mul = this.stats.dmgMul;
     const d = this.buff('damage');
     if (d) mul *= d.value;
+    if (this.inRage) mul *= 1.1;
     if (this.passive === 'rage' && this.health < this.stats.maxHealth * 0.3) mul *= 1.25;
     if (this.passive === 'powerSurge' && (kind === 'special' || kind === 'projectile')) mul *= 1.2;
     return mul;
@@ -307,6 +406,10 @@ export class Fighter {
     this.health = Math.max(0, this.health - dmg);
     if (this.passive === 'regen') this.recoverable = Math.min(this.stats.maxHealth * 0.4, this.recoverable + dmg * 0.4);
     this.lastHurtFrame = m.frame;
+    if (this.inRage && !this.rageAnnounced) {
+      this.rageAnnounced = true;
+      m.emit({ t: 'rage', fighter: this.index });
+    }
     return false;
   }
 
@@ -316,11 +419,13 @@ export class Fighter {
     if (this.invuln > 0) return true;
     if (this.throwExec) return true;
     switch (this.state) {
-      case 'knockdown': case 'getup': case 'ko': case 'cinematic': case 'thrown': case 'intro': case 'victory':
+      case 'getup': case 'techroll': case 'ko': case 'cinematic': case 'thrown': case 'intro': case 'victory':
         return true;
+      case 'knockdown':
+        return kind !== 'strike';
     }
     if (this.juggleInvuln) return true;
-    if (this.state === 'dash' && this.dashDir < 0 && this.passive === 'quickRecovery' && this.stateFrame < 10) return true;
+    if (this.state === 'backdash' && this.passive === 'quickRecovery' && this.stateFrame < 10) return true;
     const mv = this.move;
     if (this.state === 'attack' && mv?.invuln) {
       for (const r of mv.invuln) {
@@ -330,26 +435,25 @@ export class Fighter {
     return false;
   }
 
-  isEvading(): boolean {
-    return this.state === 'sidestep' && this.stateFrame >= 2 && this.stateFrame <= 15;
-  }
-
   canBlock(): boolean {
-    if (!this.grounded) return false;
+    if (!this.grounded || this.noGuard) return false;
     switch (this.state) {
-      case 'idle': case 'walkF': case 'walkB': case 'crouch': case 'blockstun':
+      case 'idle': case 'walkB': case 'crouch': case 'blockstun': case 'backdash':
         return true;
+      case 'land':
+        return this.stateFrame > 1;
     }
     return false;
   }
 
+  /** Tekken guard: standing (neutral or back) blocks highs and mids; crouching blocks lows. */
   blockOK(guard: GuardType): boolean {
     if (guard === 'unblockable') return false;
-    if (!isBack(this.relDir)) return false;
-    const crouching = this.relDir === 1;
-    if (guard === 'low') return crouching;
-    if (guard === 'overhead' || guard === 'high') return !crouching;
-    return true;
+    const d = this.relDir;
+    const crouching = this.state === 'crouch' || d === 1 || d === 2;
+    if (guard === 'low') return crouching && (d === 1 || d === 2);
+    if (crouching) return false;
+    return d === 5 || isBack(d);
   }
 
   isCounterable(): boolean {
@@ -381,35 +485,39 @@ export class Fighter {
     this.armorLeft--;
   }
 
-  /** World-space hurtboxes. */
-  hurtboxes(): Box[] {
+  get radius(): number {
+    return 0.28 * Math.min(1.3, this.def.look.build);
+  }
+
+  /** World-space cylinder hurtboxes. */
+  hurtboxes(): Cyl[] {
     switch (this.state) {
-      case 'knockdown': case 'getup': case 'ko': case 'intro': case 'victory':
+      case 'getup': case 'techroll': case 'ko': case 'intro': case 'victory':
         return [];
+      case 'knockdown':
+        return [{ x: this.x, z: this.z, y: 0.2, h: 0.4, r: 0.5 }];
     }
     const hs = this.def.look.height;
-    const bw = 0.58 * Math.min(1.3, this.def.look.build);
-    const out: Box[] = [];
-    if (!this.grounded || this.state === 'air' || this.state === 'juggle' || this.state === 'fall') {
-      out.push({ x: this.x, y: this.y + 0.95 * hs, w: bw, h: 1.3 * hs });
+    const r = this.radius;
+    const out: Cyl[] = [];
+    if (this.state === 'wallsplat') {
+      out.push({ x: this.x, z: this.z, y: this.y + 0.9, h: 1.8, r });
+    } else if (!this.grounded || this.state === 'air' || this.state === 'juggle' || this.state === 'fall') {
+      out.push({ x: this.x, z: this.z, y: this.y + 0.95 * hs, h: 1.3 * hs, r });
     } else if (this.isCrouching) {
-      out.push({ x: this.x, y: 0.55 * hs, w: bw + 0.08, h: 1.1 * hs });
+      out.push({ x: this.x, z: this.z, y: 0.55 * hs, h: 1.1 * hs, r: r + 0.04 });
     } else {
-      out.push({ x: this.x, y: 0.9 * hs, w: bw, h: 1.8 * hs });
+      out.push({ x: this.x, z: this.z, y: 0.9 * hs, h: 1.8 * hs, r });
     }
     const mv = this.move;
     if (this.state === 'attack' && mv?.hitbox && mv.kind === 'normal' && this.moveFrame > mv.startup) {
-      const hb = this.worldBox(mv.hitbox);
-      out.push({ x: hb.x - this.facing * hb.w * 0.1, y: hb.y, w: hb.w * 0.7, h: hb.h * 0.8 });
+      const p = this.ahead(mv.hitbox.x * 0.85);
+      out.push({ x: p.x, z: p.z, y: this.y + mv.hitbox.y, h: mv.hitbox.h * 0.8, r: 0.16 });
     }
     return out;
   }
 
-  worldBox(b: Box): Box {
-    return { x: this.x + this.facing * b.x, y: this.y + b.y, w: b.w, h: b.h };
-  }
-
-  /** Active hitbox this frame, if any. */
+  /** Active attack box (local frame) this frame, if any. */
   activeHitbox(): Box | null {
     const mv = this.move;
     if (this.state !== 'attack' || !mv?.hitbox || !mv.hit) return null;
@@ -420,11 +528,11 @@ export class Fighter {
       if (!mv.rehit) return null;
       if (f - this.moveLastHit < mv.rehit) return null;
     }
-    return this.worldBox(mv.hitbox);
+    return mv.hitbox;
   }
 
   canUse(mv: MoveDef, m: Match): boolean {
-    if (mv.meterCost && this.meter < mv.meterCost && !m.infiniteMeter(this)) return false;
+    if (mv.meterCost && this.meter < mv.meterCost && !m.infiniteMeter(this) && !(mv.kind === 'super' && this.inRage && !this.rageArtUsed)) return false;
     if ((this.cooldowns.get(mv.id) ?? 0) > 0) return false;
     if (mv.canStart && !mv.canStart(this, m)) return false;
     return true;
@@ -436,6 +544,7 @@ export class Fighter {
     this.stateFrame++;
     if (this.invuln > 0) this.invuln--;
     if (this.flash > 0) this.flash--;
+    if (this.wsFrames > 0) this.wsFrames--;
     this.tickBuffs(m);
 
     switch (this.state) {
@@ -445,7 +554,7 @@ export class Fighter {
         this.neutral(m);
         return;
       case 'jumpSquat':
-        if (this.stateFrame >= 4) this.takeoff(m);
+        this.jumpSquat(m);
         return;
       case 'air':
         this.airUpdate(m);
@@ -453,36 +562,51 @@ export class Fighter {
       case 'land':
         if (this.stateFrame >= this.landLag) this.toNeutral();
         return;
-      case 'dash':
-        this.dashUpdate();
+      case 'dash': case 'run': case 'backdash':
+        this.dashUpdate(m);
         return;
-      case 'sidestep': {
-        const t = this.stateFrame / 20;
-        this.z = this.sidestepDir * Math.sin(Math.PI * Math.min(1, t)) * 0.9;
-        if (this.stateFrame >= 20) {
-          this.z = 0;
-          this.toNeutral();
-        }
+      case 'sidestep': case 'sidewalk':
+        this.sidestepUpdate(m);
         return;
-      }
       case 'attack':
         this.attackUpdate(m);
         return;
       case 'hitstun': case 'blockstun': case 'dizzy':
         this.stun--;
-        if (this.stun <= 0) this.toNeutral();
+        if (this.stun <= 0) {
+          this.crumpled = false;
+          this.toNeutral();
+        }
         return;
-      case 'knockdown':
-        if (this.stateFrame >= this.knockdownFrames) {
+      case 'wallsplat':
+        this.stun--;
+        if (this.stun <= 0) this.enterJuggle(0.02, -this.dirX * 0.01, -this.dirZ * 0.01);
+        return;
+      case 'knockdown': {
+        const acted = this.input.dir !== 5 || (this.input.pressed & ATTACKS) !== 0;
+        if ((this.stateFrame >= KNOCKDOWN_MIN && acted) || this.stateFrame >= this.knockdownFrames) {
           this.setState('getup');
         }
         return;
+      }
       case 'getup':
         if (this.stateFrame >= GETUP_FRAMES) {
           this.faceOpponent();
           this.toNeutral();
         }
         return;
+      case 'techroll': {
+        const t = this.stateFrame / TECHROLL_FRAMES;
+        const sp = 0.075 * Math.sin(Math.PI * Math.min(1, t));
+        this.vx = this.sideX * sp;
+        this.vz = this.sideZ * sp;
+        if (this.stateFrame >= TECHROLL_FRAMES) {
+          this.vx = this.vz = 0;
+          this.faceOpponent();
+          this.toNeutral();
+        }
+        return;
+      }
       case 'fall': case 'juggle':
         return;
     }
@@ -512,35 +636,54 @@ export class Fighter {
 
   toNeutral(): void {
     this.move = null;
+    this.pendingString = null;
     this.fallMove = null;
     this.throwExec = null;
     this.comboHits = 0;
     this.comboDamage = 0;
     this.juggleCount = 0;
     this.juggleInvuln = false;
+    this.screwed = false;
     this.airAttackUsed = false;
     this.airJumps = 0;
     this.stun = 0;
-    this.z = 0;
+    this.spin = 0;
     if (this.grounded) {
-      this.vx = 0;
+      this.vx = this.vz = 0;
       this.setState(isDown(this.relDir) ? 'crouch' : 'idle');
     } else {
       this.setState('air');
     }
   }
 
+  private startSidestep(towardCamera: boolean, m: Match): void {
+    const n = m.camN;
+    const s = towardCamera ? 1 : -1;
+    this.sideX = n.x * s;
+    this.sideZ = n.z * s;
+    this.sidestepDir = s;
+    this.setState('sidestep');
+  }
+
   private neutral(m: Match): void {
-    this.faceOpponent();
+    this.turnToOpponent(0.4);
     this.relDir = toRelative(this.input.dir, this.facing);
-    if (this.tryAttack(m, false)) return;
     const d = this.relDir;
     const h = this.history;
 
+    // Leaving a crouch opens the "while standing" window; a quick down-tap is a sidestep.
+    if (this.state === 'crouch' && !isDown(d)) {
+      this.wsFrames = 12;
+      if (d === 5 && this.stateFrame <= 5 && this.crouchEnteredFromStand && !h.buffered(ATTACKS, 3)) {
+        this.startSidestep(true, m);
+        return;
+      }
+    }
+    if (this.tryAttack(m, false)) return;
+
     if (h.buffered(BTN.SS, 3)) {
       h.consume(BTN.SS, 3);
-      this.sidestepDir = isDown(d) ? 1 : -1;
-      this.setState('sidestep');
+      this.startSidestep(isDown(d), m);
       return;
     }
     if (h.dash(true)) {
@@ -550,7 +693,7 @@ export class Fighter {
     }
     if (h.dash(false)) {
       this.dashDir = -1;
-      this.setState('dash');
+      this.setState('backdash');
       return;
     }
     if (isUp(d)) {
@@ -559,8 +702,9 @@ export class Fighter {
       return;
     }
     if (isDown(d)) {
+      if (this.state !== 'crouch') this.crouchEnteredFromStand = this.state === 'idle' || this.state === 'walkF' || this.state === 'walkB';
       this.setState('crouch');
-      this.guarding = false;
+      this.guarding = !this.noGuard && (d === 1 || d === 2) && m.isThreatened(this);
       return;
     }
     if (d === 6) {
@@ -570,17 +714,28 @@ export class Fighter {
     }
     if (d === 4) {
       this.setState('walkB');
-      this.guarding = m.isThreatened(this);
+      this.guarding = !this.noGuard && m.isThreatened(this);
       return;
     }
-    this.guarding = false;
+    this.guarding = !this.noGuard && m.isThreatened(this);
     this.setState('idle');
+  }
+
+  /** Tekken: tapping up sidesteps into the background, holding up jumps. */
+  private jumpSquat(m: Match): void {
+    this.relDir = toRelative(this.input.dir, this.facing);
+    if (this.stateFrame <= 5 && this.tryAttack(m, false)) return;
+    if (!isUp(this.relDir) && this.stateFrame <= 5) {
+      this.startSidestep(false, m);
+      return;
+    }
+    if (this.stateFrame >= 6) this.takeoff(m);
   }
 
   private takeoff(m: Match): void {
     this.vy = this.stats.jumpVy;
     this.y = 0.001;
-    this.vx = this.jumpDir * this.stats.jumpVx * this.facing * this.speedMul();
+    this.setForward(this.jumpDir * this.stats.jumpVx * this.speedMul());
     this.airAttackUsed = false;
     this.airJumps = 0;
     this.setState('air');
@@ -599,19 +754,91 @@ export class Fighter {
         this.airJumps++;
         const jd = dirs[n - 1] === 9 ? 1 : dirs[n - 1] === 7 ? -1 : 0;
         this.vy = this.stats.jumpVy * 0.85;
-        this.vx = jd * this.stats.jumpVx * this.facing;
+        this.setForward(jd * this.stats.jumpVx);
         m.emit({ t: 'jump', fighter: this.index });
       }
     }
   }
 
-  private dashUpdate(): void {
-    const len = this.dashDir > 0 ? 16 : 20;
-    const t = this.stateFrame / len;
-    this.vx = this.facing * this.dashDir * this.stats.dash * this.speedMul() * Math.sin(Math.PI * Math.min(1, t)) * (this.dashDir > 0 ? 1 : 0.8);
-    if (this.stateFrame >= len) {
-      this.vx = 0;
-      this.toNeutral();
+  private dashUpdate(m: Match): void {
+    const spd = this.speedMul();
+    if (this.state === 'dash') {
+      this.turnToOpponent(0.2);
+      if (this.tryAttack(m, false)) return;
+      const len = 14;
+      const t = this.stateFrame / len;
+      this.setForward(this.stats.dash * spd * Math.sin(Math.PI * Math.min(1, t * 0.85 + 0.15)));
+      if (this.stateFrame >= len) {
+        if (this.relDir === 6 || this.relDir === 9 || this.relDir === 3) this.setState('run');
+        else {
+          this.vx = this.vz = 0;
+          this.toNeutral();
+        }
+      }
+    } else if (this.state === 'run') {
+      this.turnToOpponent(0.1);
+      if (this.tryAttack(m, false)) return;
+      const run = this.stats.run * spd * Math.min(1.35, 1 + this.stateFrame / 40);
+      this.setForward(run);
+      const o = this.opponent!;
+      if (this.relDir !== 6 && this.relDir !== 9 && this.relDir !== 3) {
+        this.vx = this.vz = 0;
+        this.toNeutral();
+      } else if (this.distTo(o) < 0.75) {
+        this.vx = this.vz = 0;
+        this.toNeutral();
+      }
+    } else {
+      // Backdash: cancellable into another backdash (Korean backdash).
+      const len = 20;
+      if (this.stateFrame > 9 && this.history.dash(false)) this.stateFrame = 0;
+      const t = this.stateFrame / len;
+      this.setForward(-this.stats.dash * 0.85 * spd * Math.max(0, 1 - t) ** 1.4);
+      if (this.stateFrame >= 8 && this.tryAttack(m, false)) return;
+      if (this.stateFrame >= len) {
+        this.vx = this.vz = 0;
+        this.toNeutral();
+      }
+    }
+  }
+
+  private sidestepUpdate(m: Match): void {
+    if (this.state === 'sidestep') {
+      const len = 18;
+      const t = this.stateFrame / len;
+      const sp = 0.1 * Math.sin(Math.PI * Math.min(1, t)) * this.speedMul();
+      this.vx = this.sideX * sp;
+      this.vz = this.sideZ * sp;
+      if (this.stateFrame >= 8 && this.tryAttack(m, false)) return;
+      if (this.stateFrame >= len) {
+        if (this.input.held & BTN.SS) this.setState('sidewalk');
+        else {
+          this.vx = this.vz = 0;
+          this.toNeutral();
+        }
+      }
+    } else {
+      // Sidewalk: circle the opponent while L1 is held.
+      const o = this.opponent!;
+      const ox = this.x - o.x;
+      const oz = this.z - o.z;
+      const r = Math.hypot(ox, oz) || 1;
+      const tx = -oz / r;
+      const tz = ox / r;
+      const s = Math.sign(tx * this.sideX + tz * this.sideZ) || 1;
+      const sp = 0.045 * this.speedMul();
+      // Tangential steps alone spiral outward; pull in by the chord error to keep the radius.
+      const inward = (sp * sp) / (2 * r);
+      this.vx = tx * s * sp - (ox / r) * inward;
+      this.vz = tz * s * sp - (oz / r) * inward;
+      this.sideX = tx * s;
+      this.sideZ = tz * s;
+      this.turnToOpponent(0.08);
+      if (this.tryAttack(m, false)) return;
+      if (!(this.input.held & BTN.SS)) {
+        this.vx = this.vz = 0;
+        this.toNeutral();
+      }
     }
   }
 
@@ -623,7 +850,7 @@ export class Fighter {
     let idx = -1;
     let str = 0.5;
     if (h.buffered(BTN.SP)) {
-      idx = isDown(d) ? 2 : isForward(d) ? 1 : 0;
+      idx = isDown(d) ? 2 : d === 6 || d === 9 ? 1 : 0;
     } else {
       const p = h.buffered(PUNCHES);
       const k = h.buffered(KICKS);
@@ -644,29 +871,58 @@ export class Fighter {
     return [mv, str];
   }
 
+  /** Tekken input → move. 1 = LP, 2 = HP, 3 = LK, 4 = HK; directions are relative to facing. */
   private pickNormal(air: boolean): NormalId | null {
     const b = this.history.buffered(ATTACKS);
     if (!b) return null;
+    const one = (b & BTN.LP) !== 0;
+    const two = (b & BTN.HP) !== 0;
+    const three = (b & BTN.LK) !== 0;
+    const four = (b & BTN.HK) !== 0;
+    if (air) return three || four ? 'jKick' : 'jPunch';
     const d = this.relDir;
-    if (air) return b & BTN.HK ? 'jRoundhouse' : b & BTN.HP ? 'jStrong' : b & BTN.LK ? 'jShort' : 'jJab';
-    if (isDown(d)) return b & BTN.HK ? 'sweep' : b & BTN.HP ? 'cStrong' : b & BTN.LK ? 'cShort' : 'cJab';
-    if (d === 6 && b & BTN.HP) return 'overhead';
-    return b & BTN.HK ? 'roundhouse' : b & BTN.HP ? 'strong' : b & BTN.LK ? 'short' : 'jab';
+    if ((this.state === 'dash' || this.state === 'run') && two) return 'dash2';
+    if (this.wsFrames > 0 && !isDown(d)) {
+      if (two) return 'ws2';
+      if (four) return 'ws4';
+    }
+    switch (d) {
+      case 3:
+        return four ? 'dfKick4' : two ? 'launcher' : three ? 'dfKick' : 'dfJab';
+      case 2:
+        return four ? 'shin' : two ? 'dStraight' : three ? 'lowKick' : 'dJab';
+      case 1:
+        return four ? 'sweep' : two ? 'dStraight' : three ? 'lowKick' : 'dJab';
+      case 6:
+        return four ? 'knee' : two ? 'power' : three ? 'lkick' : 'jab';
+      case 4:
+        return four ? 'spin4' : two ? 'bhook' : three ? 'lkick' : 'elbow';
+      case 9:
+        if (four) return 'ufKnee';
+        break;
+    }
+    return four ? 'rkick' : two ? 'straight' : three ? 'lkick' : one ? 'jab' : null;
   }
 
   private wantsThrow(): boolean {
     const h = this.history;
-    return h.buffered(BTN.TH) !== 0 || h.pressedTogether(BTN.LP, BTN.LK);
+    return h.buffered(BTN.TH) !== 0 || h.pressedTogether(BTN.LP, BTN.LK) || h.pressedTogether(BTN.HP, BTN.HK);
   }
 
   private tryUltimate(m: Match): boolean {
     const h = this.history;
     const ult = this.moves.ultimate;
-    if (this.meter < ULT_COST && !m.infiniteMeter(this)) return false;
+    const rageArt = this.inRage && !this.rageArtUsed;
+    if (this.meter < ULT_COST && !m.infiniteMeter(this) && !rageArt) return false;
     if (h.buffered(BTN.UL) || (h.buffered(PUNCHES) && h.motion('dqcf'))) {
       if (this.canUse(ult, m)) {
         h.consume(BTN.UL | ATTACKS | BTN.SP);
-        this.startMove(ult, 1, m);
+        if (this.meter < ULT_COST && !m.infiniteMeter(this)) {
+          this.rageArtUsed = true;
+          this.startMove({ ...ult, meterCost: 0 }, 1, m);
+        } else {
+          this.startMove(ult, 1, m);
+        }
         return true;
       }
     }
@@ -687,8 +943,8 @@ export class Fighter {
     if (!air && this.tryUltimate(m)) return true;
     if (this.trySpecial(m, air)) return true;
     if (!air && this.wantsThrow()) {
-      this.history.consume(BTN.TH | BTN.LP | BTN.LK);
-      this.throwBack = this.relDir === 4 || this.relDir === 1 || this.relDir === 7;
+      this.history.consume(BTN.TH | ATTACKS);
+      this.throwBack = isBack(this.relDir);
       this.startMove(this.moves.throw, 0.5, m);
       return true;
     }
@@ -709,21 +965,25 @@ export class Fighter {
     this.moveLastHit = -99;
     this.moveConnected = false;
     this.moveHitConfirmed = false;
+    this.pendingString = null;
     this.fallMove = null;
     this.armorLeft = mv.armor?.hits ?? (this.passive === 'heavyArmor' && mv.tag === 'heavy' ? 1 : 0);
     this.guarding = false;
     this.setState('attack');
     this.stateFrame = 0;
-    if (mv.meterCost && !m.infiniteMeter(this)) this.meter -= mv.meterCost;
+    if (mv.meterCost && !m.infiniteMeter(this)) this.meter = Math.max(0, this.meter - mv.meterCost);
     if (mv.cooldown) this.cooldowns.set(mv.id, mv.cooldown);
-    if (this.grounded && !mv.air) this.vx = 0;
+    if (this.grounded && !mv.air) this.vx = this.vz = 0;
+    // Attacks commit to facing the opponent at startup (unless off-axis after a sidestep).
+    if (this.grounded && this.offAxis() < 0.9) this.turnToOpponent(0.5);
     if (mv.superFreeze) {
+      this.faceOpponent();
       m.superFlash(this, mv);
     } else if (mv.kind === 'special') {
       m.emit({ t: 'special', fighter: this.index, name: mv.name, color: mv.color ?? 0xffffff });
       this.gainMeter(2);
     } else if (mv.kind === 'normal' || mv.kind === 'throw') {
-      m.emit({ t: 'whiff', fighter: this.index, heavy: mv.tag === 'heavy' });
+      m.emit({ t: 'whiff', fighter: this.index, heavy: mv.tag === 'heavy' || mv.tag === 'launcher' });
     }
     mv.onStart?.(this.ctx(m));
   }
@@ -737,34 +997,47 @@ export class Fighter {
     this.moveFrame++;
     const f = this.moveFrame;
 
-    if (!mv.airborne && !mv.air && this.grounded) this.vx = 0;
+    if (mv.track && f <= mv.startup) this.turnToOpponent(mv.track);
+    if (!mv.airborne && !mv.air && this.grounded) this.vx = this.vz = 0;
     if (mv.motion) {
       for (const seg of mv.motion) {
         if (f >= seg.from && f <= seg.to) {
-          if (seg.vx !== undefined) this.vx = this.facing * seg.vx;
+          if (seg.vx !== undefined) this.setForward(seg.vx);
           if (seg.vy !== undefined) this.vy = seg.vy;
         }
       }
     }
     mv.onFrame?.(this.ctx(m), f);
-    if (this.move !== mv) return; // hook changed the state
-
-    // Kara-throw: a jab or short that turns into a throw on the next frames.
-    if (f <= 2 && (mv.id === 'jab' || mv.id === 'short') && this.history.pressedTogether(BTN.LP, BTN.LK)) {
-      this.history.consume(BTN.LP | BTN.LK);
-      this.throwBack = this.relDir === 4;
-      this.startMove(this.moves.throw, 0.5, m);
-      return;
-    }
+    if (this.move !== mv) return;
 
     if (mv.throwRange && !this.throwExec && f > mv.startup && f <= mv.startup + mv.active) {
       m.tryGrab(this, mv);
       if (this.move !== mv) return;
     }
 
+    // Tekken strings: buffered follow-ups come out once the active frames end.
+    if (mv.strings && !this.pendingString) {
+      const h = this.history;
+      for (const b of ['LP', 'HP', 'LK', 'HK'] as const) {
+        const next = mv.strings[b];
+        if (next && h.buffered(BTN[b], 10)) {
+          h.consume(BTN[b], 10);
+          this.pendingString = this.moves.normals[next as NormalId] ?? null;
+          break;
+        }
+      }
+    }
+    if (this.pendingString && f >= mv.startup + mv.active) {
+      const next = this.pendingString;
+      this.pendingString = null;
+      this.startMove(next, 0.5, m);
+      return;
+    }
+
     if (this.moveConnected && f >= mv.startup && this.tryCancel(m, mv)) return;
 
-    const total = mv.startup + mv.active + mv.recovery;
+    const recovery = this.moveHitConfirmed && mv.hitRecovery !== undefined ? mv.hitRecovery : mv.recovery;
+    const total = mv.startup + mv.active + recovery;
     if (mv.airborne) {
       if (f >= mv.startup + mv.active && !this.grounded) {
         this.fallMove = mv;
@@ -783,14 +1056,6 @@ export class Fighter {
     if (mv.kind === 'normal') {
       if (mv.cancel?.includes('super') && this.tryUltimate(m)) return true;
       if (mv.cancel?.includes('special') && this.trySpecial(m, !!mv.air)) return true;
-      if (mv.chain) {
-        const n = this.pickNormal(!!mv.air);
-        if (n && mv.chain.includes(n)) {
-          this.history.consume(ATTACKS);
-          this.startMove(this.moves.normals[n], 0.5, m);
-          return true;
-        }
-      }
     } else if (mv.kind === 'special' && this.moveHitConfirmed && mv.cancel?.includes('super')) {
       if (this.tryUltimate(m)) return true;
     }
@@ -818,7 +1083,7 @@ export class Fighter {
       this.landLag = 6;
       this.move = null;
     }
-    this.vx = -this.facing * 0.07;
+    this.setForward(-0.07);
     this.vy = 0.16;
     this.setState('fall');
   }
@@ -827,42 +1092,65 @@ export class Fighter {
 
   enterHitstun(frames: number, high: boolean, heavy: boolean): void {
     this.move = null;
+    this.pendingString = null;
     this.fallMove = null;
     this.throwExec = null;
     this.stun = Math.max(1, Math.round(frames * (this.passive === 'ironWill' ? 0.85 : 1)));
     this.hitHigh = high;
     this.lastHitHeavy = heavy;
     this.guarding = false;
+    this.crumpled = false;
     this.state = 'hitstun';
     this.stateFrame = 0;
   }
 
   enterBlockstun(frames: number): void {
+    this.move = null;
+    this.pendingString = null;
     this.stun = frames;
     this.guarding = true;
     this.state = 'blockstun';
     this.stateFrame = 0;
   }
 
-  enterJuggle(vy: number, vx: number): void {
+  /**
+   * Airborne hit reaction; kx/kz is the horizontal knockback velocity in world space. Velocities
+   * are given at normal speed and slowed by JUGGLE_VY_SCALE (the Tekken float).
+   */
+  enterJuggle(vy: number, kx: number, kz: number): void {
     this.move = null;
+    this.pendingString = null;
     this.fallMove = null;
     this.throwExec = null;
     this.juggleCount++;
-    if (this.juggleCount > 5) this.juggleInvuln = true;
-    this.vy = vy;
-    this.vx = vx;
-    this.slideVx = 0;
+    if (this.juggleCount > JUGGLE_LIMIT) this.juggleInvuln = true;
+    this.vy = vy * JUGGLE_VY_SCALE;
+    this.vx = kx * JUGGLE_VY_SCALE;
+    this.vz = kz * JUGGLE_VY_SCALE;
+    this.slideX = this.slideZ = 0;
     if (this.y <= 0) this.y = 0.01;
     this.state = 'juggle';
     this.stateFrame = 0;
   }
 
-  enterDizzy(frames: number): void {
+  enterDizzy(frames: number, crumple = false): void {
     this.move = null;
+    this.pendingString = null;
     this.stun = frames;
+    this.crumpled = crumple;
     this.state = 'dizzy';
     this.stateFrame = 0;
+  }
+
+  enterWallsplat(frames: number, m: Match): void {
+    this.move = null;
+    this.vx = this.vz = this.slideX = this.slideZ = 0;
+    this.vy = 0;
+    this.y = Math.min(Math.max(this.y, 0.15), 1.1);
+    this.stun = frames;
+    this.state = 'wallsplat';
+    this.stateFrame = 0;
+    m.emit({ t: 'wallsplat', fighter: this.index });
   }
 
   // ---------------------------------------------------------------- physics
@@ -872,30 +1160,36 @@ export class Fighter {
     const spd = this.speedMul();
     switch (this.state) {
       case 'walkF':
-        this.vx = this.facing * this.stats.walk * spd;
+        this.setForward(this.stats.walk * spd);
         break;
       case 'walkB':
-        this.vx = this.guarding ? 0 : -this.facing * this.stats.back * spd;
+        this.setForward(-this.stats.back * spd);
         break;
       case 'idle': case 'crouch': case 'land': case 'blockstun': case 'hitstun': case 'dizzy':
-      case 'knockdown': case 'getup': case 'jumpSquat': case 'sidestep': case 'intro': case 'victory':
-        if (this.grounded) this.vx = 0;
+      case 'knockdown': case 'getup': case 'jumpSquat': case 'intro': case 'victory': case 'wallsplat':
+        if (this.grounded) this.vx = this.vz = 0;
         break;
     }
-    this.x += this.vx + this.slideVx;
-    if (this.grounded) {
-      this.slideVx *= 0.82;
-      if (Math.abs(this.slideVx) < 0.002) this.slideVx = 0;
-    } else {
-      this.slideVx *= 0.95;
-    }
+    this.x += this.vx + this.slideX;
+    this.z += this.vz + this.slideZ;
+    const decay = this.grounded ? 0.84 : 0.95;
+    this.slideX *= decay;
+    this.slideZ *= decay;
+    if (Math.abs(this.slideX) + Math.abs(this.slideZ) < 0.002) this.slideX = this.slideZ = 0;
 
+    if (this.state === 'wallsplat') {
+      // Pinned to the wall, sliding down slowly.
+      this.y = Math.max(0.1, this.y - 0.006);
+      return;
+    }
     if (this.y > 0 || this.vy > 0) {
       const mv = this.move;
       const hovering = mv?.hover && this.state === 'attack' && this.moveFrame >= mv.hover.from && this.moveFrame <= mv.hover.to;
       if (hovering) this.vy = 0;
+      else if (this.state === 'juggle') this.vy -= JUGGLE_GRAVITY * (1 + 0.08 * this.juggleCount);
       else this.vy -= this.stats.gravity;
       this.y += this.vy;
+      if (this.state === 'juggle') this.spin += this.screwed ? 0.35 : 0;
       if (this.y <= 0) {
         this.y = 0;
         this.land(m);
@@ -909,21 +1203,21 @@ export class Fighter {
     this.y = 0;
     switch (this.state) {
       case 'air':
-        this.vx = 0;
-        this.landLag = 3;
+        this.vx = this.vz = 0;
+        this.landLag = 4;
         this.faceOpponent();
         this.setState('land');
         m.emit({ t: 'land', fighter: this.index, hard: false });
         break;
       case 'attack': {
         const mv = this.move;
-        this.vx = 0;
+        this.vx = this.vz = 0;
         if (mv?.airborne) {
           if (this.moveFrame <= 2) break;
           mv.onLand?.(this.ctx(m));
           this.landLag = mv.recovery;
         } else {
-          this.landLag = mv?.air ? 4 : 2;
+          this.landLag = mv?.air ? 5 : 2;
         }
         this.move = null;
         this.faceOpponent();
@@ -932,7 +1226,7 @@ export class Fighter {
         break;
       }
       case 'fall': {
-        this.vx = 0;
+        this.vx = this.vz = 0;
         const fm = this.fallMove;
         if (fm?.onLand) {
           this.move = fm;
@@ -946,26 +1240,37 @@ export class Fighter {
         break;
       }
       case 'juggle':
-        this.vx = 0;
-        this.slideVx = -this.facing * 0.03;
+        this.vx = this.vz = 0;
+        this.spin = 0;
+        this.slideX = -this.dirX * 0.02;
+        this.slideZ = -this.dirZ * 0.02;
         if (this.koed) {
           this.setState('ko');
         } else if (this.pendingDizzy > 0) {
           this.enterDizzy(this.pendingDizzy);
           this.pendingDizzy = 0;
+        } else if (this.history.buffered(ATTACKS, 8) && !this.juggleInvuln) {
+          // Tech roll: press a button as you hit the ground.
+          this.history.consume(ATTACKS, 8);
+          const n = m.camN;
+          const s = this.index === 0 ? 1 : -1;
+          this.sideX = n.x * s;
+          this.sideZ = n.z * s;
+          this.setState('techroll');
+          m.emit({ t: 'techroll', fighter: this.index });
         } else {
-          this.knockdownFrames = this.passive === 'quickRecovery' ? Math.round(KNOCKDOWN_FRAMES / 2) : KNOCKDOWN_FRAMES;
+          this.knockdownFrames = this.passive === 'quickRecovery' ? Math.round(KNOCKDOWN_MAX / 2) : KNOCKDOWN_MAX;
           this.setState('knockdown');
         }
         m.emit({ t: 'land', fighter: this.index, hard: true });
-        m.emit({ t: 'shake', amount: Math.min(0.2, Math.abs(wasVy) * 0.5) });
+        m.emit({ t: 'shake', amount: Math.min(0.2, Math.abs(wasVy) * 0.6) });
         break;
       case 'ko':
-        this.vx = 0;
+        this.vx = this.vz = 0;
         m.emit({ t: 'land', fighter: this.index, hard: true });
         break;
       default:
-        this.vx = 0;
+        this.vx = this.vz = 0;
     }
   }
 }

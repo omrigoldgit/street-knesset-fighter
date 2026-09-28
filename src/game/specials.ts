@@ -81,9 +81,9 @@ export function buildSpecial(spec: SpecialSpec, idx: number): MoveDef {
           const sp = (spec.speed ?? 0.16) * strengthMul(ctx, 0.85, 1.15) * (spec.arc ? 0.62 : 1);
           const spread = count > 1 && !spec.arc ? (i - (count - 1) / 2) * 0.012 : 0;
           ctx.match.spawnProjectile(f, {
-            x: f.x + f.facing * 0.8,
+            ...f.ahead(0.8),
             y: spec.arc ? 1.7 : 1.25,
-            vx: f.facing * sp,
+            speed: sp,
             vy: spec.arc ? 0.14 + 0.03 * ctx.strength : spread,
             gravity: spec.arc ? 0.0085 : 0,
             w: 0.5 * size,
@@ -115,7 +115,8 @@ export function buildSpecial(spec: SpecialSpec, idx: number): MoveDef {
         startup,
         active,
         recovery: 20,
-        hitbox: { x: 0.62, y: 1.1, w: 0.9, h: 1.1 },
+        hitbox: { x: 0.62, y: 1.1, w: 0.9, h: 1.1, lw: 0.34 },
+        track: 0.06,
         hit: sHit(per, { pushback: hits > 1 ? 0.03 : 0.16, hitstun: hits > 1 ? 18 : 24, knockdown: hits === 1 && !!spec.launch, launch: hits === 1 && spec.launch ? 0.24 : undefined }),
         finalHit: hits > 1 ? { pushback: 0.18, knockdown: true, launch: spec.launch ? 0.24 : 0.12 } : undefined,
         rehit: hits > 1 ? 5 : undefined,
@@ -125,9 +126,9 @@ export function buildSpecial(spec: SpecialSpec, idx: number): MoveDef {
           const f = ctx.fighter;
           if (fr >= startup - 2 && fr <= startup + active) {
             const speed = ((spec.distance ?? 3.4) * strengthMul(ctx, 0.8, 1.2)) / (active + 2);
-            f.vx = f.moveConnected ? f.facing * 0.01 : f.facing * speed;
+            f.setForward(f.moveConnected ? 0.01 : speed);
           } else if (fr > startup + active) {
-            f.vx = 0;
+            f.vx = f.vz = 0;
           }
         },
       };
@@ -146,7 +147,7 @@ export function buildSpecial(spec: SpecialSpec, idx: number): MoveDef {
         recovery: 16,
         airborne: true,
         invuln: [{ from: 1, to: 9, kind: 'full' }],
-        hitbox: { x: 0.45, y: 1.45, w: 0.8, h: 1.4 },
+        hitbox: { x: 0.45, y: 1.45, w: 0.8, h: 1.4, lw: 0.42 },
         hit: sHit(per, { launch: hits > 1 ? 0.16 : 0.26, launchVx: 0.03, knockdown: true, hitstun: 20 }),
         finalHit: { launch: 0.26 },
         rehit: hits > 1 ? 4 : undefined,
@@ -155,7 +156,7 @@ export function buildSpecial(spec: SpecialSpec, idx: number): MoveDef {
           if (fr === 4) {
             const f = ctx.fighter;
             f.vy = 0.3 * (spec.height ?? 1) * strengthMul(ctx, 0.88, 1.12);
-            f.vx = f.facing * 0.04;
+            f.setForward(0.04);
           }
         },
       };
@@ -187,7 +188,7 @@ export function buildSpecial(spec: SpecialSpec, idx: number): MoveDef {
         startup: 3,
         active: 6,
         recovery: 18,
-        hitbox: { x: 0.8, y: 1.1, w: 1.8, h: 1.8 },
+        hitbox: { x: 0.8, y: 1.1, w: 1.8, h: 1.8, lw: 0.7 },
         hit: sHit(spec.damage ?? 140, { knockdown: true, launch: 0.2, guard: 'mid', spark: 'heavy' }),
         invuln: [{ from: 1, to: 10, kind: 'full' }],
         cancel: ['super'],
@@ -248,22 +249,28 @@ export function buildSpecial(spec: SpecialSpec, idx: number): MoveDef {
         active: attack ? 5 : 1,
         recovery: attack ? 16 : 12,
         invuln: [{ from: 1, to: vanishAt + 4, kind: 'full' }],
-        hitbox: attack ? { x: 0.7, y: 1.2, w: 0.9, h: 1.0 } : undefined,
+        hitbox: attack ? { x: 0.7, y: 1.2, w: 0.9, h: 1.0, lw: 0.45 } : undefined,
         hit: attack ? sHit(80, { knockdown: true, launch: 0.14 }) : undefined,
         cooldown: 90,
         onFrame: (ctx, fr) => {
           if (fr !== vanishAt) return;
           const f = ctx.fighter;
           const o = ctx.opponent;
-          const side = Math.sign(f.x - o.x) || -f.facing;
-          let to: number;
-          if (spec.mode === 'behind') to = o.x - side * 1.1;
-          else if (spec.mode === 'front') to = o.x + side * 1.1;
-          else to = f.x - f.facing * 3.5;
-          to = ctx.match.clampX(to, f);
-          ctx.match.emit({ t: 'teleport', fighter: f.index, fromX: f.x, toX: to, color: spec.color });
-          f.x = to;
-          f.faceToward(o.x);
+          // Unit vector from the opponent toward us.
+          let ux = f.x - o.x;
+          let uz = f.z - o.z;
+          const ul = Math.hypot(ux, uz) || 1;
+          ux /= ul;
+          uz /= ul;
+          let target: { x: number; z: number };
+          if (spec.mode === 'behind') target = { x: o.x - ux * 1.1, z: o.z - uz * 1.1 };
+          else if (spec.mode === 'front') target = { x: o.x + ux * 1.1, z: o.z + uz * 1.1 };
+          else target = f.ahead(-3.5);
+          const to = ctx.match.clampPos(target);
+          ctx.match.emit({ t: 'teleport', fighter: f.index, fromX: f.x, fromZ: f.z, toX: to.x, toZ: to.z, color: spec.color });
+          f.x = to.x;
+          f.z = to.z;
+          f.faceToward(o.x, o.z);
         },
       };
     }
@@ -282,9 +289,9 @@ export function buildSpecial(spec: SpecialSpec, idx: number): MoveDef {
           if (fr !== 14) return;
           const f = ctx.fighter;
           ctx.match.spawnProjectile(f, {
-            x: f.x + f.facing * 0.8,
+            ...f.ahead(0.8),
             y: 0.22,
-            vx: f.facing * (spec.speed ?? 0.13) * strengthMul(ctx, 0.85, 1.15),
+            speed: (spec.speed ?? 0.13) * strengthMul(ctx, 0.85, 1.15),
             w: 0.75,
             h: 0.42,
             hit: sHit(spec.damage ?? 75, { guard: 'low', knockdown: true, launch: 0.1 }),
@@ -308,13 +315,13 @@ export function buildSpecial(spec: SpecialSpec, idx: number): MoveDef {
         recovery: 10,
         airborne: true,
         airOK: true,
-        hitbox: { x: 0.45, y: 0.25, w: 0.75, h: 0.65 },
+        hitbox: { x: 0.45, y: 0.25, w: 0.75, h: 0.65, lw: 0.36 },
         hit: sHit(spec.damage ?? 90, { guard: 'overhead', hitstun: 20 }),
         onStart: (ctx) => {
           const f = ctx.fighter;
           if (f.grounded) {
             f.vy = 0.27;
-            f.vx = f.facing * 0.05;
+            f.setForward(0.05);
             f.y = 0.01;
           } else {
             f.vy = Math.max(f.vy, 0.04);
@@ -323,7 +330,7 @@ export function buildSpecial(spec: SpecialSpec, idx: number): MoveDef {
         onFrame: (ctx, fr) => {
           const f = ctx.fighter;
           if (fr >= startup && !f.moveConnected) {
-            f.vx = f.facing * 0.2 * strengthMul(ctx, 0.85, 1.15);
+            f.setForward(0.2 * strengthMul(ctx, 0.85, 1.15));
             f.vy = -0.24;
           }
         },
@@ -348,7 +355,7 @@ export function buildSpecial(spec: SpecialSpec, idx: number): MoveDef {
           const f = ctx.fighter;
           ctx.match.removeProjectiles(f, tag);
           ctx.match.spawnProjectile(f, {
-            x: ctx.match.clampX(f.x + f.facing * strengthMul(ctx, 1.4, 2.6), f),
+            ...ctx.match.clampPos(f.ahead(strengthMul(ctx, 1.4, 2.6))),
             y: 0.3,
             w: 0.8,
             h: 0.6,
@@ -380,7 +387,7 @@ export function buildSpecial(spec: SpecialSpec, idx: number): MoveDef {
           if (fr !== 16) return;
           const f = ctx.fighter;
           ctx.match.spawnProjectile(f, {
-            x: f.x + f.facing * (0.7 + len / 2),
+            ...f.ahead(0.7 + len / 2),
             y: 1.3,
             w: len,
             h: 0.6,
@@ -407,14 +414,16 @@ export function buildSpecial(spec: SpecialSpec, idx: number): MoveDef {
         startup: 12,
         active: 6,
         recovery: 22,
-        hitbox: { x: 2.0, y: 1.2, w: 2.8, h: 0.5 },
+        hitbox: { x: 2.0, y: 1.2, w: 2.8, h: 0.5, lw: 0.3 },
         hit: sHit(spec.damage ?? 50, { hitstun: 36, pushback: 0, spark: 'special' }),
         onHit: (ctx, blocked) => {
           if (blocked) return;
           const f = ctx.fighter;
           const o = ctx.opponent;
-          o.x = ctx.match.clampX(f.x + f.facing * 0.95, o);
-          o.slideVx = 0;
+          const p = ctx.match.clampPos(f.ahead(0.95));
+          o.x = p.x;
+          o.z = p.z;
+          o.slideX = o.slideZ = 0;
         },
       };
     }
@@ -428,23 +437,32 @@ export function buildSpecial(spec: SpecialSpec, idx: number): MoveDef {
         active: 50,
         recovery: 18,
         airborne: true,
-        hitbox: { x: 0.2, y: 0.3, w: 1.3, h: 0.9 },
+        hitbox: { x: 0.2, y: 0.3, w: 1.3, h: 0.9, lw: 0.8 },
         hit: sHit(spec.damage ?? 120, { guard: 'overhead', knockdown: true, launch: 0.14 }),
         onStart: (ctx) => {
           const f = ctx.fighter;
           f.vy = 0.36;
           f.y = 0.01;
-          const dx = ctx.opponent.x - f.x;
-          f.vx = Math.max(-0.17, Math.min(0.17, dx / 42));
+          f.faceOpponent();
+          const dx = (ctx.opponent.x - f.x) / 42;
+          const dz = (ctx.opponent.z - f.z) / 42;
+          const k = Math.min(1, 0.17 / Math.max(0.001, Math.hypot(dx, dz)));
+          f.vx = dx * k;
+          f.vz = dz * k;
         },
         onLand: (ctx) => {
           const f = ctx.fighter;
           ctx.match.emit({ t: 'shake', amount: 0.25 });
-          for (const dir of [-1, 1]) {
+          for (const s of [-1, 1]) {
+            const dX = f.dirX * s;
+            const dZ = f.dirZ * s;
             ctx.match.spawnProjectile(f, {
-              x: f.x + dir * 0.6,
+              x: f.x + dX * 0.6,
+              z: f.z + dZ * 0.6,
+              dirX: dX,
+              dirZ: dZ,
               y: 0.18,
-              vx: dir * 0.12,
+              speed: 0.12,
               w: 0.6,
               h: 0.35,
               hit: sHit(35, { guard: 'low', hitstun: 16 }),
@@ -475,9 +493,9 @@ export function buildSpecial(spec: SpecialSpec, idx: number): MoveDef {
             ctx.match.schedule(i * 9, () => {
               const o = f.opponent;
               if (!o) return;
-              const x = o.x + (ctx.match.rng() - 0.5) * 1.8;
               ctx.match.spawnProjectile(f, {
-                x,
+                x: o.x + (ctx.match.rng() - 0.5) * 1.4,
+                z: o.z + (ctx.match.rng() - 0.5) * 1.4,
                 y: 7.5,
                 vy: -0.2,
                 gravity: 0.004,
@@ -524,7 +542,7 @@ export function buildSpecial(spec: SpecialSpec, idx: number): MoveDef {
         recovery: 14,
         airborne: true,
         hover: { from: 8, to: startup + active },
-        hitbox: { x: 0.25, y: 1.15, w: 1.5, h: 0.75 },
+        hitbox: { x: 0.25, y: 1.15, w: 1.5, h: 0.75, lw: 0.6 },
         hit: sHit(per, { hitstun: 18, pushback: 0.03 }),
         finalHit: { knockdown: true, launch: 0.16, pushback: 0.15 },
         rehit: 7,
@@ -536,7 +554,7 @@ export function buildSpecial(spec: SpecialSpec, idx: number): MoveDef {
             f.y = 0.01;
           }
           if (fr >= startup && fr <= startup + active) {
-            f.vx = (f.facing * (spec.distance ?? 3.0) * strengthMul(ctx, 0.8, 1.2)) / active;
+            f.setForward(((spec.distance ?? 3.0) * strengthMul(ctx, 0.8, 1.2)) / active);
           }
         },
       };
@@ -552,7 +570,7 @@ export function buildSpecial(spec: SpecialSpec, idx: number): MoveDef {
         startup: 6,
         active: 26,
         recovery: 18,
-        hitbox: { x: 0.72, y: 1.3, w: 0.9, h: 0.8 },
+        hitbox: { x: 0.72, y: 1.3, w: 0.9, h: 0.8, lw: 0.34 },
         hit: sHit(per, { hitstun: 16, blockstun: 10, pushback: 0.02 }),
         finalHit: { pushback: 0.2, knockdown: true, launch: 0.14 },
         rehit: 4,
@@ -596,12 +614,13 @@ export function buildUltimate(spec: UltimateSpec): MoveDef {
         active: 16,
         recovery: 28,
         invuln: [{ from: 1, to: 14, kind: 'full' }],
-        hitbox: { x: 0.7, y: 1.1, w: 1.1, h: 1.5 },
+        hitbox: { x: 0.7, y: 1.1, w: 1.1, h: 1.5, lw: 0.55 },
+        track: 0.25,
         hit: sHit(40, { chip: 60, blockstun: 22, pushback: 0.2, spark: 'super' }),
         onFrame: (ctx, fr) => {
           const f = ctx.fighter;
-          if (fr >= 4 && fr <= 22) f.vx = f.moveConnected ? 0 : f.facing * 0.25;
-          else f.vx = 0;
+          if (fr >= 4 && fr <= 22) f.setForward(f.moveConnected ? 0 : 0.25);
+          else f.vx = f.vz = 0;
         },
         onHit: (ctx, blocked) => {
           if (!blocked) ctx.match.startCinematic(ctx.fighter, ctx.opponent, spec.damage ?? 380, spec.name, spec.color, spec.prop);
@@ -621,7 +640,7 @@ export function buildUltimate(spec: UltimateSpec): MoveDef {
           const f = ctx.fighter;
           const hits = 10;
           ctx.match.spawnProjectile(f, {
-            x: f.x + f.facing * (0.7 + len / 2),
+            ...f.ahead(0.7 + len / 2),
             y: 1.25,
             w: len,
             h: 1.1,
@@ -655,7 +674,8 @@ export function buildUltimate(spec: UltimateSpec): MoveDef {
               const o = f.opponent;
               if (!o) return;
               ctx.match.spawnProjectile(f, {
-                x: o.x + (ctx.match.rng() - 0.5) * 2.4,
+                x: o.x + (ctx.match.rng() - 0.5) * 2.0,
+                z: o.z + (ctx.match.rng() - 0.5) * 2.0,
                 y: 8,
                 vy: -0.26,
                 gravity: 0.004,
@@ -698,9 +718,9 @@ export function buildUltimate(spec: UltimateSpec): MoveDef {
           const f = ctx.fighter;
           const hits = 5;
           ctx.match.spawnProjectile(f, {
-            x: f.x + f.facing * 1.1,
+            ...f.ahead(1.1),
             y: 1.2,
-            vx: f.facing * 0.15,
+            speed: 0.15,
             w: 1.5,
             h: 1.5,
             hit: sHit(Math.round((spec.damage ?? 340) / hits), { hitstun: 18, chip: 10, pushback: 0.04, spark: 'super', tracking: true }),

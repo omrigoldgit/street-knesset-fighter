@@ -30,12 +30,26 @@ export const NO_INPUT: PlayerInput = Object.freeze({ dir: 5, held: 0, pressed: 0
 export type GuardType = 'mid' | 'high' | 'low' | 'overhead' | 'unblockable';
 export type SparkKind = 'light' | 'heavy' | 'special' | 'super';
 
-/** Axis aligned box. For move definitions x is forward from the fighter's origin, y is up from the feet. */
+/**
+ * Attack box in the attacker's local frame: x is forward from the fighter's origin, y is up from
+ * the feet, w/h are forward extent and height, lw is the lateral half-width. Narrow (linear) attacks
+ * whiff against a sidestep; wide (homing) ones catch it.
+ */
 export interface Box {
   x: number;
   y: number;
   w: number;
   h: number;
+  lw?: number;
+}
+
+/** Vertical cylinder hurtbox in world space. */
+export interface Cyl {
+  x: number;
+  z: number;
+  y: number;
+  h: number;
+  r: number;
 }
 
 export interface HitEffect {
@@ -69,6 +83,14 @@ export interface HitDef {
   /** Hits a sidestepping opponent. */
   tracking?: boolean;
   effect?: HitEffect;
+  /** Tekken screw: spins a juggled opponent, extending the combo (once per juggle). */
+  screw?: boolean;
+  /** Crumples the opponent on counter hit. */
+  crumpleCH?: boolean;
+  /** Strong knockback that wall-splats near a wall. */
+  wall?: boolean;
+  /** Can hit a grounded (knocked-down) opponent. */
+  otg?: boolean;
 }
 
 export interface MotionSeg {
@@ -86,10 +108,12 @@ export interface FrameRange {
 export type InvulnKind = 'full' | 'strike' | 'projectile' | 'throw';
 
 export type AnimKey =
-  | 'jab' | 'strong' | 'short' | 'roundhouse'
-  | 'cJab' | 'cStrong' | 'cShort' | 'sweep'
-  | 'jJab' | 'jStrong' | 'jShort' | 'jRoundhouse'
-  | 'overhead' | 'throw' | 'throwExec'
+  // Tekken-style normals
+  | 'jab' | 'jab2' | 'straight' | 'hook' | 'midKick' | 'highKick' | 'kick2' | 'dfJab' | 'launcher'
+  | 'frontKick' | 'power' | 'knee' | 'elbow' | 'bHook' | 'spinBack' | 'dJab' | 'dStraight' | 'lowKick'
+  | 'shin' | 'sweep' | 'ufKnee' | 'wsUpper' | 'wsKick' | 'dashPunch' | 'jPunch' | 'jKick'
+  | 'throw' | 'throwExec'
+  // Specials
   | 'cast' | 'charge' | 'uppercut' | 'grab' | 'grabExec' | 'counterStance' | 'counterStrike'
   | 'powerup' | 'vanish' | 'stomp' | 'diveKick' | 'place' | 'beam' | 'whip' | 'slamRise'
   | 'summon' | 'guardUp' | 'spinKick' | 'flurry' | 'ultCombo' | 'taunt';
@@ -129,6 +153,12 @@ export interface MoveDef {
   lowProfile?: boolean;
   /** Normals this move can chain into on hit or block. */
   chain?: string[];
+  /** Tekken strings: button pressed during this move continues into the given move id. */
+  strings?: Partial<Record<'LP' | 'HP' | 'LK' | 'HK', string>>;
+  /** Turn rate (rad/frame) toward the opponent during startup: tracking moves. */
+  track?: number;
+  /** Recovery used instead of `recovery` once the move has hit (launchers recover fast enough to juggle). */
+  hitRecovery?: number;
   cancel?: ('special' | 'super')[];
   meterCost?: number;
   color?: number;
@@ -184,7 +214,7 @@ export interface Buff {
 }
 
 export type GameEvent =
-  | { t: 'hit'; x: number; y: number; spark: SparkKind; blocked: boolean; counter: boolean; attacker: number; defender: number; damage: number; color?: number }
+  | { t: 'hit'; x: number; y: number; z: number; spark: SparkKind; blocked: boolean; counter: boolean; attacker: number; defender: number; damage: number; color?: number }
   | { t: 'whiff'; fighter: number; heavy: boolean }
   | { t: 'special'; fighter: number; name: string; color: number }
   | { t: 'superFlash'; fighter: number; name: string; color: number }
@@ -192,14 +222,17 @@ export type GameEvent =
   | { t: 'announce'; text: string; sub?: string; big?: boolean; frames?: number }
   | { t: 'jump'; fighter: number }
   | { t: 'land'; fighter: number; hard: boolean }
-  | { t: 'tech'; x: number; y: number }
+  | { t: 'tech'; x: number; y: number; z: number }
   | { t: 'buff'; fighter: number; kind: BuffKind; color: number }
-  | { t: 'teleport'; fighter: number; fromX: number; toX: number; color: number }
+  | { t: 'teleport'; fighter: number; fromX: number; fromZ: number; toX: number; toZ: number; color: number }
+  | { t: 'wallsplat'; fighter: number }
+  | { t: 'techroll'; fighter: number }
+  | { t: 'rage'; fighter: number }
   | { t: 'lifeline'; fighter: number; name: string }
   | { t: 'rumble'; fighter: number; strong: number; weak: number; ms: number }
   | { t: 'shake'; amount: number }
   | { t: 'projectile'; id: number; owner: number }
-  | { t: 'clash'; x: number; y: number }
+  | { t: 'clash'; x: number; y: number; z: number }
   | { t: 'counterHit'; fighter: number }
   | { t: 'round'; n: number }
   | { t: 'fight' }

@@ -266,6 +266,17 @@ export class FightScreen implements Screen {
       case 'clash':
         a.sfx('clash');
         break;
+      case 'wallsplat':
+        a.sfx('landHard', 0.8);
+        a.sfx('crowd');
+        break;
+      case 'techroll':
+        a.sfx('whoosh', 0.8);
+        break;
+      case 'rage':
+        a.sfx('buff', 0.7);
+        a.say('Rage!');
+        break;
       case 'counterHit':
         a.sfx('counter');
         break;

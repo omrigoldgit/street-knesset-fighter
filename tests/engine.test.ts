@@ -75,12 +75,13 @@ describe('motion input', () => {
 });
 
 describe('combat basics', () => {
-  it('a jab hits an idle opponent for its listed damage', () => {
+  it('a jab hits an opponent who is not guarding', () => {
     const m = new Match(cfg('lapid', 'gantz', { seed: 1 }));
     runUntilFight(m);
     const [a, b] = m.fighters;
     a.x = 0;
     b.x = 0.8;
+    b.noGuard = true;
     const before = b.health;
     m.tick([press(BTN.LP), NO_INPUT]);
     for (let i = 0; i < 12; i++) m.tick([NO_INPUT, NO_INPUT]);
@@ -123,6 +124,166 @@ describe('combat basics', () => {
     const saved2 = b.takeDamage(99999, m);
     expect(saved2).toBe(false);
     expect(b.health).toBe(0);
+  });
+});
+
+/** Sets up a fight with both fighters facing each other along x. */
+function duel(p1 = 'lapid', p2 = 'gantz', gap = 0.9): Match {
+  const m = new Match(cfg(p1, p2, { seed: 1 }));
+  runUntilFight(m);
+  const [a, b] = m.fighters;
+  a.x = 0;
+  b.x = gap;
+  a.faceOpponent();
+  b.faceOpponent();
+  return m;
+}
+
+function run(m: Match, frames: number, p1: PlayerInput = NO_INPUT, p2: PlayerInput = NO_INPUT): void {
+  for (let i = 0; i < frames; i++) m.tick([p1, p2]);
+}
+
+describe('Tekken mechanics', () => {
+  it('standing still guards highs and mids automatically', () => {
+    const m = duel();
+    const [, b] = m.fighters;
+    const before = b.health;
+    m.tick([press(BTN.LP), NO_INPUT]);
+    let blocked = false;
+    for (let i = 0; i < 16; i++) {
+      m.tick([NO_INPUT, NO_INPUT]);
+      if (b.state === 'blockstun') blocked = true;
+    }
+    expect(b.health).toBe(before);
+    expect(blocked).toBe(true);
+  });
+
+  it('high attacks whiff over a crouching opponent', () => {
+    const m = duel();
+    const [, b] = m.fighters;
+    run(m, 4, NO_INPUT, hold(2));
+    expect(b.state).toBe('crouch');
+    const before = b.health;
+    m.tick([press(BTN.LP), hold(2)]);
+    let blocked = false;
+    for (let i = 0; i < 16; i++) {
+      m.tick([NO_INPUT, hold(2)]);
+      if (b.state === 'blockstun') blocked = true;
+    }
+    expect(b.health).toBe(before);
+    expect(blocked).toBe(false);
+  });
+
+  it('lows hit a standing opponent and are guarded crouching', () => {
+    const m = duel();
+    const [, b] = m.fighters;
+    const before = b.health;
+    m.tick([press(BTN.HK, 2), NO_INPUT]);
+    run(m, 20, hold(2));
+    expect(b.health).toBeLessThan(before);
+
+    const m2 = duel();
+    const b2 = m2.fighters[1];
+    run(m2, 4, NO_INPUT, hold(2));
+    const before2 = b2.health;
+    m2.tick([press(BTN.HK, 2), hold(2)]);
+    run(m2, 20, hold(2), hold(2));
+    expect(b2.health).toBe(before2);
+  });
+
+  it('a sidestep makes a linear attack whiff, but a homing attack tracks it', () => {
+    // Linear: 2 (right straight).
+    const m = duel('lapid', 'gantz', 1.1);
+    const [a, b] = m.fighters;
+    b.noGuard = true;
+    const before = b.health;
+    m.tick([press(BTN.HP), press(BTN.SS)]);
+    run(m, 24);
+    expect(b.health).toBe(before);
+    expect(Math.abs(b.z)).toBeGreaterThan(0.4);
+
+    // Homing: b+4 (spinning heel).
+    const m2 = duel('lapid', 'gantz', 1.1);
+    const [a2, b2] = m2.fighters;
+    b2.noGuard = true;
+    const before2 = b2.health;
+    m2.tick([press(BTN.HK, a2.facing > 0 ? 4 : 6), press(BTN.SS)]);
+    run(m2, 30);
+    expect(b2.health).toBeLessThan(before2);
+    expect(a.state).not.toBe('ko');
+  });
+
+  it('a launcher on hit allows a juggle follow-up before the opponent lands', () => {
+    const m = duel('lapid', 'gantz', 0.9);
+    const [a, b] = m.fighters;
+    b.noGuard = true;
+    m.tick([press(BTN.HP, a.facing > 0 ? 3 : 1), NO_INPUT]);
+    let launched = false;
+    let followed = false;
+    let maxCombo = 0;
+    for (let i = 0; i < 140; i++) {
+      if (b.state === 'juggle') launched = true;
+      let p1 = NO_INPUT;
+      if (launched && !followed && a.actionable && b.state === 'juggle') {
+        p1 = press(BTN.LP);
+        followed = true;
+      }
+      m.tick([p1, NO_INPUT]);
+      maxCombo = Math.max(maxCombo, b.comboHits);
+    }
+    expect(launched).toBe(true);
+    expect(followed).toBe(true);
+    expect(maxCombo).toBeGreaterThanOrEqual(2);
+  });
+
+  it('heavy hits near the arena edge cause a wall splat', () => {
+    const m = new Match(cfg('lapid', 'gantz', { seed: 1 }));
+    runUntilFight(m);
+    const [a, b] = m.fighters;
+    a.x = 7.4;
+    b.x = 8.3;
+    a.faceOpponent();
+    b.faceOpponent();
+    b.noGuard = true;
+    let splat = false;
+    m.tick([press(BTN.HP, a.facing > 0 ? 6 : 4), NO_INPUT]);
+    for (let i = 0; i < 40; i++) {
+      m.tick([NO_INPUT, NO_INPUT]);
+      if (b.state === 'wallsplat') splat = true;
+    }
+    expect(splat).toBe(true);
+    expect(Math.hypot(b.x, b.z)).toBeLessThanOrEqual(9);
+  });
+
+  it('pressing a button as you land tech rolls instead of lying down', () => {
+    const m = duel();
+    const [, b] = m.fighters;
+    b.enterJuggle(0.12, 0, 0);
+    let rolled = false;
+    for (let i = 0; i < 80; i++) {
+      const p2 = b.state === 'juggle' && b.vy < 0 && b.y < 0.3 ? press(BTN.LP) : NO_INPUT;
+      m.tick([NO_INPUT, p2]);
+      if (b.state === 'techroll') rolled = true;
+    }
+    expect(rolled).toBe(true);
+  });
+
+  it('the camera axis follows the fighters as they circle, and facing stays consistent', () => {
+    const m = duel('lapid', 'gantz', 2);
+    const [a, b] = m.fighters;
+    // P1 sidewalks (hold L1) into the background for a while.
+    m.tick([press(BTN.SS), NO_INPUT]);
+    run(m, 90, { dir: 5, held: BTN.SS, pressed: 0 });
+    expect(Math.abs(a.z - b.z)).toBeGreaterThan(0.5);
+    // Camera normal stays perpendicular to the fight axis.
+    const ax = b.x - a.x;
+    const az = b.z - a.z;
+    const l = Math.hypot(ax, az);
+    const dot = (ax / l) * m.camN.x + (az / l) * m.camN.z;
+    expect(Math.abs(dot)).toBeLessThan(0.35);
+    // Fighters still face each other and have opposite screen sides.
+    expect(a.offAxis()).toBeLessThan(0.5);
+    expect(a.facing).toBe(-b.facing);
   });
 });
 

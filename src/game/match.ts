@@ -1,12 +1,13 @@
-// Match: owns both fighters, projectiles, hit resolution and round flow.
+// Match: owns both fighters, projectiles, 3D hit resolution and round flow.
 
 import type { CharacterDef } from './characterTypes';
 import {
-  MAX_METER, MAX_SEPARATION, PUSH_WIDTH, STAGE_HALF_WIDTH, THROW_TECH_WINDOW, comboScale,
+  ARENA_RADIUS, JUGGLE_VY_SCALE, LAUNCHER, MAX_METER, PUSH_RADIUS, THROW_TECH_WINDOW, WALLSPLAT_FRAMES, comboScale,
 } from './constants';
 import { Fighter, GRAB_EXEC, THROW_EXEC } from './fighter';
 import { Projectile, type ProjectileOpts } from './projectile';
-import { BTN, NO_INPUT, type Box, type GameEvent, type HitDef, type MoveDef, type PlayerInput, type PropStyle, type SparkKind } from './types';
+import { BTN, NO_INPUT, type Box, type Cyl, type GameEvent, type HitDef, type MoveDef, type PlayerInput, type PropStyle, type SparkKind } from './types';
+import { leftOf, type V2 } from './vec';
 
 export type DummyMode = 'stand' | 'crouch' | 'jump' | 'block' | 'cpu';
 
@@ -47,17 +48,22 @@ interface HitSource {
   projectile?: Projectile;
   x: number;
   y: number;
+  z: number;
 }
 
 export type HitResult = 'miss' | 'hit' | 'block' | 'absorb' | 'counter' | 'reflect' | 'armor';
 
-function overlaps(a: Box, b: Box): boolean {
-  return Math.abs(a.x - b.x) * 2 < a.w + b.w && Math.abs(a.y - b.y) * 2 < a.h + b.h;
-}
-
-function overlapsAny(a: Box, list: Box[]): Box | null {
-  for (const b of list) if (overlaps(a, b)) return b;
-  return null;
+/** Does an attack box (in the attacker's local frame) overlap a world-space cylinder? */
+export function boxHitsCyl(att: Fighter, b: Box, c: Cyl): boolean {
+  const d = att.dir;
+  const L = leftOf(d);
+  const rx = c.x - att.x;
+  const rz = c.z - att.z;
+  const f = rx * d.x + rz * d.z;
+  const l = rx * L.x + rz * L.z;
+  if (Math.abs(f - b.x) > b.w / 2 + c.r) return false;
+  if (Math.abs(l) > (b.lw ?? 0.26) + c.r) return false;
+  return Math.abs(att.y + b.y - c.y) * 2 < b.h + c.h;
 }
 
 function hitstopFor(hit: HitDef, kind: MoveDef['kind'], projectile: boolean): number {
@@ -92,6 +98,8 @@ export class Match {
   matchWinner: number | null = null;
   perfect = false;
   paused = false;
+  /** Unit vector (ground plane) from the fight toward the camera; perpendicular to the fight axis. */
+  camN: V2 = { x: 0, z: 1 };
 
   private scheduled: { at: number; fn: () => void }[] = [];
   private seed: number;
@@ -158,13 +166,25 @@ export class Match {
     this.scheduled.push({ at: this.frame + delay, fn });
   }
 
-  clampX(x: number, _f?: Fighter): number {
-    const lim = STAGE_HALF_WIDTH - 0.35;
-    return Math.max(-lim, Math.min(lim, x));
+  /** Clamps a ground-plane point inside the arena. */
+  clampPos(p: V2, margin = 0.35): V2 {
+    const lim = ARENA_RADIUS - margin;
+    const r = Math.hypot(p.x, p.z);
+    if (r <= lim) return { x: p.x, z: p.z };
+    return { x: (p.x / r) * lim, z: (p.z / r) * lim };
   }
 
-  spawnProjectile(owner: Fighter, opts: ProjectileOpts): Projectile {
-    const p = new Projectile(owner, opts);
+  atWall(f: Fighter, margin = 0.45): boolean {
+    return Math.hypot(f.x, f.z) >= ARENA_RADIUS - margin;
+  }
+
+  /** Screen-right vector for the current camera side. */
+  get screenRight(): V2 {
+    return { x: this.camN.z, z: -this.camN.x };
+  }
+
+  spawnProjectile(owner: Fighter, opts: Omit<ProjectileOpts, 'z'> & { z?: number }): Projectile {
+    const p = new Projectile(owner, { z: owner.z, ...opts } as ProjectileOpts);
     this.projectiles.push(p);
     this.emit({ t: 'projectile', id: p.id, owner: owner.index });
     return p;
@@ -187,11 +207,15 @@ export class Match {
 
   isThreatened(f: Fighter): boolean {
     const o = f.opponent!;
-    const dist = Math.abs(o.x - f.x);
+    const dist = f.distTo(o);
     if (o.state === 'attack' && o.move && dist < 3.4 && o.moveFrame <= o.move.startup + o.move.active) return true;
     for (const p of this.projectiles) {
-      if (p.owner === o && !p.dead && Math.abs(p.x - f.x) < 3.8 && Math.sign(f.x - p.x) === Math.sign(p.vx || p.facing)) return true;
-      if (p.owner === o && p.kind === 'rain' && Math.abs(p.x - f.x) < 1.5) return true;
+      if (p.owner !== o || p.dead) continue;
+      const dx = f.x - p.x;
+      const dz = f.z - p.z;
+      const d = Math.hypot(dx, dz);
+      if (p.kind === 'rain' && d < 1.5) return true;
+      if (d < 3.8 && (p.attach || dx * p.vx + dz * p.vz > 0)) return true;
     }
     return false;
   }
@@ -200,8 +224,10 @@ export class Match {
 
   private placeFighters(): void {
     const [a, b] = this.fighters;
-    a.resetForRound(-2.1, 1);
-    b.resetForRound(2.1, -1);
+    a.resetForRound(-2.0, 0, 0);
+    b.resetForRound(2.0, 0, Math.PI);
+    this.camN = { x: 0, z: 1 };
+    this.updateAxis(1);
   }
 
   skipIntro(): void {
@@ -236,10 +262,40 @@ export class Match {
     }
   }
 
+  /**
+   * Keeps the camera perpendicular to the fight axis (continuous as fighters circle each other)
+   * and derives each fighter's screen-relative facing for input.
+   */
+  private updateAxis(rate = 0.12): void {
+    const [a, b] = this.fighters;
+    const ax = b.x - a.x;
+    const az = b.z - a.z;
+    const l = Math.hypot(ax, az);
+    if (l > 0.05) {
+      let nx = -az / l;
+      let nz = ax / l;
+      if (nx * this.camN.x + nz * this.camN.z < 0) {
+        nx = -nx;
+        nz = -nz;
+      }
+      const mx = this.camN.x + (nx - this.camN.x) * rate;
+      const mz = this.camN.z + (nz - this.camN.z) * rate;
+      const ml = Math.hypot(mx, mz) || 1;
+      this.camN = { x: mx / ml, z: mz / ml };
+    }
+    const R = this.screenRight;
+    for (const f of this.fighters) {
+      const o = f.opponent!;
+      const s = (o.x - f.x) * R.x + (o.z - f.z) * R.z;
+      if (Math.abs(s) > 0.05) f.facing = s > 0 ? 1 : -1;
+    }
+  }
+
   tick(inputs: [PlayerInput, PlayerInput]): void {
     this.ticks++;
     if (this.paused) return;
     const live = this.phase === 'fight';
+    this.updateAxis();
     this.fighters[0].recordInput(live ? inputs[0] : NO_INPUT);
     this.fighters[1].recordInput(live ? inputs[1] : NO_INPUT);
 
@@ -273,6 +329,7 @@ export class Match {
     this.updateThrows();
     for (const f of this.fighters) f.physics(this);
     this.resolvePush();
+    this.checkWalls();
     this.updateProjectiles();
     if (this.phase === 'fight') this.detectHits();
     if (this.config.training) this.trainingUpkeep();
@@ -314,19 +371,12 @@ export class Match {
         break;
       }
       case 'ko': {
-        if (this.phaseFrame === 110) {
+        if (this.phaseFrame >= 110) {
           for (const f of this.fighters) {
-            if (!f.koed && (this.roundWinner === f.index)) {
+            if (!f.koed && this.roundWinner === f.index && f.state !== 'victory' && f.grounded && (f.actionable || this.phaseFrame === 110)) {
               f.move = null;
               f.throwExec = null;
               f.faceOpponent();
-              if (f.grounded) f.setState('victory');
-            }
-          }
-        }
-        if (this.phaseFrame > 110) {
-          for (const f of this.fighters) {
-            if (!f.koed && this.roundWinner === f.index && f.state !== 'victory' && f.grounded && f.actionable) {
               f.setState('victory');
             }
           }
@@ -351,7 +401,7 @@ export class Match {
     this.slowmo = 70;
     for (const d of dead) {
       d.koed = true;
-      if (d.state !== 'juggle') d.enterJuggle(0.17, -d.facing * 0.07);
+      if (d.state !== 'juggle') d.enterJuggle(0.17, -d.dirX * 0.07, -d.dirZ * 0.07);
     }
     this.roundWinner = dead.length === 2 ? -1 : 1 - dead[0].index;
     const w = this.roundWinner >= 0 ? this.fighters[this.roundWinner] : null;
@@ -371,7 +421,7 @@ export class Match {
     this.roundWinner = Math.abs(ra - rb) < 1e-6 ? -1 : ra > rb ? 0 : 1;
     this.perfect = false;
     for (const f of this.fighters) {
-      if (f.state === 'attack' || f.state === 'dash' || f.state === 'walkF' || f.state === 'walkB') {
+      if (f.state === 'attack' || f.state === 'dash' || f.state === 'run' || f.state === 'walkF' || f.state === 'walkB') {
         f.move = null;
         if (f.grounded) f.setState('idle');
       }
@@ -424,51 +474,59 @@ export class Match {
 
   private resolvePush(): void {
     const [a, b] = this.fighters;
-    const lim = STAGE_HALF_WIDTH - 0.35;
-    for (const f of this.fighters) f.x = Math.max(-lim, Math.min(lim, f.x));
-
-    // Keep both fighters on screen.
-    const sep = b.x - a.x;
-    if (Math.abs(sep) > MAX_SEPARATION) {
-      const excess = Math.abs(sep) - MAX_SEPARATION;
-      const dir = Math.sign(sep);
-      const aAway = Math.sign(a.vx + a.slideVx) === -dir;
-      const bAway = Math.sign(b.vx + b.slideVx) === dir;
-      if (aAway && !bAway) a.x += dir * excess;
-      else if (bAway && !aAway) b.x -= dir * excess;
-      else {
-        a.x += (dir * excess) / 2;
-        b.x -= (dir * excess) / 2;
-      }
+    for (const f of this.fighters) {
+      const p = this.clampPos(f);
+      f.x = p.x;
+      f.z = p.z;
     }
-
-    const skip = (f: Fighter) => f.state === 'thrown' || f.state === 'cinematic' || f.koed && f.state === 'ko';
+    const skip = (f: Fighter) => f.state === 'thrown' || f.state === 'cinematic' || (f.koed && f.state === 'ko');
     if (skip(a) || skip(b)) return;
     const topA = a.y + (a.isCrouching ? 1.1 : 1.7);
     const topB = b.y + (b.isCrouching ? 1.1 : 1.7);
     if (a.y >= topB - 0.25 || b.y >= topA - 0.25) return;
-    const dx = b.x - a.x;
-    const overlap = PUSH_WIDTH - Math.abs(dx);
-    if (overlap <= 0) return;
-    let dir = Math.sign(dx);
-    if (dir === 0) dir = a.facing;
-    let pa = overlap / 2;
-    let pb = overlap / 2;
-    if (a.x - dir * pa < -lim || a.x - dir * pa > lim) {
-      pb = overlap;
-      pa = 0;
-    } else if (b.x + dir * pb < -lim || b.x + dir * pb > lim) {
-      pa = overlap;
-      pb = 0;
+    let dx = b.x - a.x;
+    let dz = b.z - a.z;
+    let d = Math.hypot(dx, dz);
+    const min = PUSH_RADIUS * 2;
+    if (d >= min) return;
+    if (d < 1e-4) {
+      dx = a.dirX;
+      dz = a.dirZ;
+      d = 1;
+    } else {
+      dx /= d;
+      dz /= d;
     }
-    a.x -= dir * pa;
-    b.x += dir * pb;
-    a.x = Math.max(-lim, Math.min(lim, a.x));
-    b.x = Math.max(-lim, Math.min(lim, b.x));
+    const overlap = min - Math.min(d, min);
+    // If one fighter is against the wall, the other absorbs the whole push.
+    const aWall = this.atWall(a, 0.4);
+    const bWall = this.atWall(b, 0.4);
+    const pa = aWall && !bWall ? 0 : bWall && !aWall ? overlap : overlap / 2;
+    const pb = overlap - pa;
+    a.x -= dx * pa;
+    a.z -= dz * pa;
+    b.x += dx * pb;
+    b.z += dz * pb;
+    for (const f of this.fighters) {
+      const p = this.clampPos(f);
+      f.x = p.x;
+      f.z = p.z;
+    }
   }
 
-  private atWall(f: Fighter): boolean {
-    return Math.abs(f.x) >= STAGE_HALF_WIDTH - 0.4;
+  /** Fighters knocked into the arena edge get wall-splatted. */
+  private checkWalls(): void {
+    for (const f of this.fighters) {
+      if (!this.atWall(f, 0.4) || f.koed) continue;
+      const sp = Math.hypot(f.vx + f.slideX, f.vz + f.slideZ);
+      const outward = (f.x * (f.vx + f.slideX) + f.z * (f.vz + f.slideZ)) > 0;
+      if (!outward) continue;
+      if ((f.state === 'juggle' && sp > 0.03 && f.y < 1.6) || (f.state === 'hitstun' && sp > 0.12)) {
+        f.enterWallsplat(WALLSPLAT_FRAMES, this);
+        this.hitstop = Math.max(this.hitstop, 8);
+        this.emit({ t: 'shake', amount: 0.18 });
+      }
+    }
   }
 
   // ---------------------------------------------------------------- throws
@@ -478,13 +536,11 @@ export class Match {
     if (!def.grounded || def.y > 0.05) return;
     if (def.isInvuln('throw')) return;
     switch (def.state) {
-      case 'hitstun': case 'blockstun': case 'juggle': case 'knockdown': case 'getup': case 'thrown': case 'jumpSquat':
+      case 'hitstun': case 'blockstun': case 'juggle': case 'knockdown': case 'getup': case 'thrown': case 'jumpSquat': case 'techroll': case 'wallsplat':
         return;
     }
-    if (def.isEvading()) return;
-    const dist = Math.abs(def.x - att.x);
-    if (dist > (mv.throwRange ?? 1)) return;
-    if (dist > 0.3 && Math.sign(def.x - att.x) !== att.facing) return;
+    const loc = att.localOf(def.x, def.z);
+    if (loc.f < -0.2 || loc.f > (mv.throwRange ?? 1) || Math.abs(loc.l) > 0.55) return;
 
     if (mv.grabCinematic) {
       this.startCinematic(att, def, mv.grabCinematic.damage, mv.grabCinematic.name, mv.color ?? 0xffcc00, mv.prop);
@@ -521,34 +577,42 @@ export class Match {
         continue;
       }
       te.frame++;
-      def.x = this.clampX(att.x + att.facing * 0.72);
+      const p = this.clampPos(att.ahead(0.72));
+      def.x = p.x;
+      def.z = p.z;
       def.y = 0.12 + Math.sin(Math.min(1, te.frame / 26) * Math.PI) * 0.35;
-      def.vx = def.vy = 0;
-      def.facing = -att.facing;
+      def.vx = def.vy = def.vz = 0;
+      def.yaw = att.yaw + Math.PI;
 
       if (te.techable && te.frame <= THROW_TECH_WINDOW) {
         const h = def.history;
-        if (h.buffered(BTN.TH, THROW_TECH_WINDOW) || h.pressedTogether(BTN.LP, BTN.LK, THROW_TECH_WINDOW)) {
-          h.consume(BTN.TH | BTN.LP | BTN.LK, THROW_TECH_WINDOW);
+        if (h.buffered(BTN.TH | BTN.LP | BTN.HP, THROW_TECH_WINDOW)) {
+          h.consume(BTN.TH | BTN.LP | BTN.HP, THROW_TECH_WINDOW);
           att.throwExec = null;
           att.move = null;
           def.grabbedBy = null;
           def.y = 0;
           att.enterBlockstun(14);
           def.enterBlockstun(14);
-          att.slideVx = -att.facing * 0.16;
-          def.slideVx = att.facing * 0.16;
-          this.emit({ t: 'tech', x: (att.x + def.x) / 2, y: 1.2 });
-          this.emit({ t: 'announce', text: 'TECH!', frames: 30 });
+          att.slideX = -att.dirX * 0.16;
+          att.slideZ = -att.dirZ * 0.16;
+          def.slideX = att.dirX * 0.16;
+          def.slideZ = att.dirZ * 0.16;
+          this.emit({ t: 'tech', x: (att.x + def.x) / 2, y: 1.2, z: (att.z + def.z) / 2 });
+          this.emit({ t: 'announce', text: 'THROW BREAK!', frames: 30 });
           continue;
         }
       }
 
       if (te.frame === 26) {
-        let dir = att.facing;
+        let kx = att.dirX;
+        let kz = att.dirZ;
         if (te.back) {
-          def.x = this.clampX(att.x - att.facing * 0.8);
-          dir = -att.facing;
+          const q = this.clampPos(att.ahead(-0.8));
+          def.x = q.x;
+          def.z = q.z;
+          kx = -kx;
+          kz = -kz;
         }
         const dmg = te.damage * def.incomingMul(false);
         def.grabbedBy = null;
@@ -563,16 +627,13 @@ export class Match {
           att.gainMeter(d);
         }
         if (eff?.lifesteal) att.heal(eff.lifesteal);
-        def.enterJuggle(0.2, dir * 0.11);
-        if (eff?.stun && def.health > 0) {
-          // Command grabs with stun leave the victim dizzy on landing.
-          def.pendingDizzy = eff.stun;
-        }
+        def.enterJuggle(0.2, kx * 0.11, kz * 0.11);
+        if (eff?.stun && def.health > 0) def.pendingDizzy = eff.stun;
         att.gainMeter(12);
         def.gainMeter(6);
         this.hitstop = Math.max(this.hitstop, 10);
         def.flash = 10;
-        this.emit({ t: 'hit', x: def.x, y: 1.0, spark: 'heavy', blocked: false, counter: false, attacker: att.index, defender: def.index, damage: Math.round(dmg), color: te.move.color });
+        this.emit({ t: 'hit', x: def.x, y: 1.0, z: def.z, spark: 'heavy', blocked: false, counter: false, attacker: att.index, defender: def.index, damage: Math.round(dmg), color: te.move.color });
         this.emit({ t: 'shake', amount: 0.2 });
         this.emit({ t: 'rumble', fighter: def.index, strong: 0.9, weak: 0.5, ms: 250 });
         att.throwExec = null;
@@ -587,18 +648,19 @@ export class Match {
     att.move = null;
     att.throwExec = null;
     att.fallMove = null;
-    att.vx = att.vy = att.slideVx = 0;
+    att.vx = att.vy = att.vz = att.slideX = att.slideZ = 0;
     att.y = 0;
     att.setState('cinematic');
     def.move = null;
     def.throwExec = null;
     def.grabbedBy = null;
-    def.vx = def.vy = def.slideVx = 0;
+    def.vx = def.vy = def.vz = def.slideX = def.slideZ = 0;
     def.y = 0;
     def.setState('cinematic');
-    def.x = this.clampX(att.x + att.facing * 0.95);
-    if (Math.abs(def.x - att.x) < 0.9) att.x = this.clampX(def.x - att.facing * 0.95);
-    def.facing = -att.facing;
+    const p = this.clampPos(att.ahead(0.95));
+    def.x = p.x;
+    def.z = p.z;
+    def.yaw = att.yaw + Math.PI;
     this.cinematic = {
       att, def, frame: 0, total: 104, hits: 8, damage, name, color, prop,
       scale: Math.max(0.5, comboScale(def.comboHits + 1)),
@@ -620,8 +682,9 @@ export class Match {
       def.comboHits++;
       def.takeDamage(per, this, last);
       def.flash = 8;
+      const hp = def.ahead(0.2);
       this.emit({
-        t: 'hit', x: def.x - def.facing * 0.2, y: 0.9 + ((i * 37) % 7) / 10, spark: last ? 'super' : 'heavy', blocked: false, counter: false,
+        t: 'hit', x: hp.x, y: 0.9 + ((i * 37) % 7) / 10, z: hp.z, spark: last ? 'super' : 'heavy', blocked: false, counter: false,
         attacker: att.index, defender: def.index, damage: Math.round(per), color: c.color,
       });
       this.emit({ t: 'shake', amount: last ? 0.3 : 0.08 });
@@ -633,9 +696,8 @@ export class Match {
       att.state = 'idle';
       att.toNeutral();
       def.state = 'idle';
-      def.enterJuggle(0.3, att.facing * 0.1);
+      def.enterJuggle(0.3, att.dirX * 0.1, att.dirZ * 0.1);
       def.juggleInvuln = true;
-      att.gainMeter(0);
     }
   }
 
@@ -647,21 +709,23 @@ export class Match {
     const hb = b.activeHitbox();
     const hurtA = a.hurtboxes();
     const hurtB = b.hurtboxes();
-    const aHits = ha ? overlapsAny(ha, hurtB) : null;
-    const bHits = hb ? overlapsAny(hb, hurtA) : null;
-    if (aHits && ha) this.strike(a, b, ha, aHits);
-    if (bHits && hb) this.strike(b, a, hb, bHits);
+    const aHit = ha ? hurtB.find((c) => boxHitsCyl(a, ha, c)) : undefined;
+    const bHit = hb ? hurtA.find((c) => boxHitsCyl(b, hb, c)) : undefined;
+    if (aHit && ha) this.strike(a, b, ha, aHit);
+    if (bHit && hb) this.strike(b, a, hb, bHit);
   }
 
-  private strike(att: Fighter, def: Fighter, hb: Box, hurt: Box): void {
+  private strike(att: Fighter, def: Fighter, hb: Box, hurt: Cyl): void {
     const mv = att.move;
     if (!mv?.hit) return;
     let hit = mv.hit;
     const multi = (mv.maxHits ?? 1) > 1;
     if (multi && mv.finalHit && att.moveHits + 1 >= (mv.maxHits ?? 1)) hit = { ...hit, ...mv.finalHit };
-    const x = (Math.max(hb.x - hb.w / 2, hurt.x - hurt.w / 2) + Math.min(hb.x + hb.w / 2, hurt.x + hurt.w / 2)) / 2;
-    const y = Math.max(Math.min(hb.y, hurt.y + hurt.h / 2 - 0.1), hurt.y - hurt.h / 2 + 0.1);
-    const res = this.resolveHit(att, def, hit, { kind: mv.kind, x, y });
+    // Spark between the fist and the target's surface.
+    const reach = Math.max(0.2, Math.min(hb.x + hb.w / 2, att.distTo(def) - hurt.r * 0.6));
+    const sp = att.ahead(reach);
+    const y = Math.max(Math.min(att.y + hb.y, hurt.y + hurt.h / 2 - 0.1), hurt.y - hurt.h / 2 + 0.1);
+    const res = this.resolveHit(att, def, hit, { kind: mv.kind, x: sp.x, y, z: sp.z });
     if (res === 'miss') return;
     att.moveHits++;
     att.moveLastHit = att.moveFrame;
@@ -681,31 +745,34 @@ export class Match {
     this.hitstop = Math.max(this.hitstop, 12);
     this.emit({ t: 'counterHit', fighter: def.index });
     this.emit({ t: 'announce', text: 'COUNTER!', frames: 40 });
-    this.emit({ t: 'hit', x: (att.x + def.x) / 2, y: 1.3, spark: 'special', blocked: true, counter: true, attacker: def.index, defender: att.index, damage: 0, color: strike.color });
+    this.emit({ t: 'hit', x: (att.x + def.x) / 2, y: 1.3, z: (att.z + def.z) / 2, spark: 'special', blocked: true, counter: true, attacker: def.index, defender: att.index, damage: 0, color: strike.color });
   }
 
   resolveHit(att: Fighter, def: Fighter, hit: HitDef, src: HitSource): HitResult {
     const proj = src.projectile;
     const isProj = !!proj;
     if (def.isInvuln(isProj ? 'projectile' : 'strike')) return 'miss';
-    if (def.isEvading() && !hit.tracking) return 'miss';
+    // Grounded opponents can only be hit by moves that reach the floor.
+    if (def.state === 'knockdown' && !hit.otg) return 'miss';
 
     if (def.inCounterWindow() && def.move?.counterMove) {
       if (!isProj) {
         this.triggerCounter(def, att);
         return 'counter';
       }
-      this.emit({ t: 'clash', x: src.x, y: src.y });
+      this.emit({ t: 'clash', x: src.x, y: src.y, z: src.z });
       return 'absorb';
     }
     if (isProj && def.buff('reflect') && proj.kind !== 'mega' && proj.kind !== 'beam') {
       proj.owner = def;
       proj.vx = -proj.vx;
-      proj.facing = -proj.facing;
+      proj.vz = -proj.vz;
+      proj.dirX = -proj.dirX;
+      proj.dirZ = -proj.dirZ;
       proj.reflected = true;
       proj.age = 0;
       proj.lastHitAge = -999;
-      this.emit({ t: 'clash', x: src.x, y: src.y });
+      this.emit({ t: 'clash', x: src.x, y: src.y, z: src.z });
       this.emit({ t: 'sfx', name: 'reflect' });
       return 'reflect';
     }
@@ -714,12 +781,25 @@ export class Match {
       shield.value--;
       if (shield.value <= 0) shield.frames = 0;
       this.hitstop = Math.max(this.hitstop, 6);
-      this.emit({ t: 'hit', x: src.x, y: src.y, spark: 'light', blocked: true, counter: false, attacker: att.index, defender: def.index, damage: 0, color: shield.color });
+      this.emit({ t: 'hit', x: src.x, y: src.y, z: src.z, spark: 'light', blocked: true, counter: false, attacker: att.index, defender: def.index, damage: 0, color: shield.color });
       this.emit({ t: 'sfx', name: 'shield' });
       return 'absorb';
     }
 
-    const dir = isProj ? Math.sign(proj.vx) || proj.facing : Math.sign(def.x - att.x) || att.facing;
+    // Knockback direction on the ground plane.
+    let kx: number;
+    let kz: number;
+    if (isProj) {
+      const l = Math.hypot(proj.vx, proj.vz);
+      kx = l > 0 ? proj.vx / l : proj.dirX;
+      kz = l > 0 ? proj.vz / l : proj.dirZ;
+    } else {
+      const dx = def.x - att.x;
+      const dz = def.z - att.z;
+      const l = Math.hypot(dx, dz);
+      kx = l > 0.01 ? dx / l : att.dirX;
+      kz = l > 0.01 ? dz / l : att.dirZ;
+    }
     const kindForDmg: MoveDef['kind'] | 'projectile' = isProj ? (proj.kind === 'mega' ? 'super' : 'projectile') : src.kind;
     const heavy = hit.spark === 'heavy' || hit.spark === 'super' || hit.spark === 'special';
 
@@ -729,12 +809,16 @@ export class Match {
       if (att.passive === 'chipMaster') chip = Math.max(chip * 3, hit.damage * 0.12);
       if (chip > 0) def.takeDamage(chip * att.outgoingMul(kindForDmg === 'projectile' ? 'projectile' : src.kind) * def.incomingMul(isProj), this);
       def.enterBlockstun(hit.blockstun);
-      def.slideVx = dir * hit.pushback * 1.15;
-      if (!isProj && this.atWall(def)) att.slideVx = -dir * hit.pushback * 0.9;
+      def.slideX = kx * hit.pushback * 1.15;
+      def.slideZ = kz * hit.pushback * 1.15;
+      if (!isProj && this.atWall(def)) {
+        att.slideX = -kx * hit.pushback * 0.9;
+        att.slideZ = -kz * hit.pushback * 0.9;
+      }
       att.gainMeter(3);
       def.gainMeter(3);
       this.hitstop = Math.max(this.hitstop, Math.max(4, hitstopFor(hit, src.kind, isProj) - 3));
-      this.emit({ t: 'hit', x: src.x, y: src.y, spark: 'light', blocked: true, counter: false, attacker: att.index, defender: def.index, damage: 0 });
+      this.emit({ t: 'hit', x: src.x, y: src.y, z: src.z, spark: 'light', blocked: true, counter: false, attacker: att.index, defender: def.index, damage: 0 });
       this.emit({ t: 'rumble', fighter: def.index, strong: 0.15, weak: 0.3, ms: 80 });
       return 'block';
     }
@@ -747,6 +831,7 @@ export class Match {
     let scale = comboScale(def.comboHits);
     if (att.passive === 'comboMaster') scale = Math.max(0.4, 1 - (def.comboHits - 1) * 0.07);
     if (src.kind === 'super' || kindForDmg === 'super') scale = Math.max(scale, 0.5);
+    if (def.state === 'knockdown') scale *= 0.5;
     dmg = Math.max(1, Math.round(dmg * scale * def.incomingMul(isProj)));
 
     // Armor absorbs the hitstun but not the damage.
@@ -756,7 +841,7 @@ export class Match {
       def.comboHits = Math.max(0, def.comboHits - 1);
       def.flash = 8;
       this.hitstop = Math.max(this.hitstop, 8);
-      this.emit({ t: 'hit', x: src.x, y: src.y, spark: 'heavy', blocked: false, counter: false, attacker: att.index, defender: def.index, damage: dmg, color: 0xffaa33 });
+      this.emit({ t: 'hit', x: src.x, y: src.y, z: src.z, spark: 'heavy', blocked: false, counter: false, attacker: att.index, defender: def.index, damage: dmg, color: 0xffaa33 });
       this.emit({ t: 'sfx', name: 'armor' });
       return 'armor';
     }
@@ -766,7 +851,7 @@ export class Match {
       const t = def.throwExec.target;
       def.throwExec = null;
       t.grabbedBy = null;
-      t.enterJuggle(0.1, -t.facing * 0.05);
+      t.enterJuggle(0.1, -t.dirX * 0.05, -t.dirZ * 0.05);
     }
 
     def.comboDamage += dmg;
@@ -778,35 +863,62 @@ export class Match {
       def.meter -= d;
       att.gainMeter(d);
     }
-    if (att.passive === 'drainer') {
-      const d = Math.min(def.meter, 4);
-      def.meter -= d;
-    }
+    if (att.passive === 'drainer') def.meter -= Math.min(def.meter, 4);
     if (eff?.lifesteal) att.heal(eff.lifesteal);
     if (att.passive === 'vampire') att.heal(dmg * 0.12);
     if (eff?.slow) def.addBuff('slow', 0.6, eff.slow, 0x6688ff, this);
 
     const airborne = !def.grounded || def.state === 'juggle' || def.state === 'air' || def.state === 'fall';
-    const launches = !!hit.launch && (src.kind !== 'normal' || airborne);
+    const launches = !!hit.launch && (hit.launch >= LAUNCHER || src.kind !== 'normal' || airborne);
     const w = Math.sqrt(def.stats.weight);
+    const lv = hit.launchVx ?? 0.03;
     if (saved) {
-      def.enterJuggle(0.2, dir * 0.08);
+      def.enterJuggle(0.2, kx * 0.08, kz * 0.08);
     } else if (def.health <= 0) {
-      def.enterJuggle(Math.max(0.2, hit.launch ?? 0), dir * 0.08);
-    } else if (launches) {
-      def.enterJuggle((hit.launch ?? 0.2) / w, dir * (hit.launchVx ?? 0.05));
+      def.enterJuggle(Math.max(0.2, hit.launch ?? 0), kx * 0.08, kz * 0.08);
+    } else if (def.state === 'knockdown') {
+      // Ground hit: stays down a little longer.
+      def.stateFrame = Math.max(0, def.stateFrame - 12);
+    } else if (def.state === 'wallsplat') {
+      def.stun = Math.min(def.stun + 14, 30);
+      def.y = Math.min(1.1, def.y + 0.08);
     } else if (airborne) {
-      def.enterJuggle(0.13, dir * 0.05);
+      // Juggle hit: small pop that decays as the combo grows. Screws spin the body for one extension.
+      const curVy = def.state === 'juggle' ? def.vy / JUGGLE_VY_SCALE : def.vy;
+      let vy = Math.max(curVy, (launches ? hit.launch! * 0.75 : 0.11) - def.juggleCount * 0.008);
+      if (hit.screw && !def.screwed) {
+        def.screwed = true;
+        vy = Math.max(vy, 0.15);
+        this.emit({ t: 'announce', text: 'SCREW!', frames: 24 });
+      }
+      def.enterJuggle(vy / w, kx * (lv + hit.pushback * 0.25), kz * (lv + hit.pushback * 0.25));
+    } else if (launches) {
+      def.enterJuggle(hit.launch! / w, kx * lv, kz * lv);
+      if (hit.launch! >= LAUNCHER) this.emit({ t: 'announce', text: 'LAUNCH!', frames: 22 });
     } else if (hit.knockdown) {
-      def.enterJuggle(0.12, dir * 0.045);
+      def.enterJuggle(0.12, kx * 0.045, kz * 0.045);
     } else if (eff?.stun) {
       def.enterDizzy(eff.stun);
-      def.slideVx = dir * hit.pushback;
+      def.slideX = kx * hit.pushback;
+      def.slideZ = kz * hit.pushback;
+    } else if (counter && hit.crumpleCH) {
+      def.enterDizzy(52, true);
+      this.emit({ t: 'announce', text: 'CRUMPLE!', frames: 30 });
     } else {
-      const high = src.y > 1.0;
-      def.enterHitstun(hit.hitstun + (counter ? 4 : 0), high, heavy);
-      def.slideVx = (dir * hit.pushback) / w;
-      if (!isProj && this.atWall(def)) att.slideVx = -dir * hit.pushback * 0.9;
+      // Head-snap reaction for highs; mids and lows fold the body instead.
+      const high = hit.guard === 'high' || src.y > 1.35;
+      def.enterHitstun(hit.hitstun + (counter ? 6 : 0), high, heavy);
+      const push = hit.pushback * (hit.wall ? 1.3 : 1);
+      def.slideX = (kx * push) / w;
+      def.slideZ = (kz * push) / w;
+      if (!isProj && this.atWall(def)) {
+        if (hit.wall) {
+          def.enterWallsplat(WALLSPLAT_FRAMES, this);
+        } else {
+          att.slideX = -kx * hit.pushback * 0.9;
+          att.slideZ = -kz * hit.pushback * 0.9;
+        }
+      }
     }
 
     att.gainMeter((hit.meterGain ?? 5) + dmg * 0.03);
@@ -814,10 +926,10 @@ export class Match {
     this.hitstop = Math.max(this.hitstop, hitstopFor(hit, src.kind, isProj) + (counter ? 3 : 0));
     def.flash = 5;
     const spark: SparkKind = hit.spark ?? 'light';
-    this.emit({ t: 'hit', x: src.x, y: src.y, spark, blocked: false, counter, attacker: att.index, defender: def.index, damage: dmg, color: proj?.color });
+    this.emit({ t: 'hit', x: src.x, y: src.y, z: src.z, spark, blocked: false, counter, attacker: att.index, defender: def.index, damage: dmg, color: proj?.color });
     if (counter) {
       this.emit({ t: 'counterHit', fighter: att.index });
-      this.emit({ t: 'announce', text: 'COUNTER', frames: 30 });
+      this.emit({ t: 'announce', text: 'COUNTER HIT', frames: 30 });
     }
     const strong = spark === 'super' ? 1 : heavy ? 0.7 : 0.35;
     this.emit({ t: 'rumble', fighter: def.index, strong, weak: strong * 0.6, ms: heavy ? 200 : 110 });
@@ -832,20 +944,19 @@ export class Match {
     const ps = this.projectiles;
     for (const p of ps) p.update(p.owner.opponent!);
 
-    // Projectile clashes.
     for (let i = 0; i < ps.length; i++) {
       const p = ps[i];
       if (!p.active || p.kind === 'trap') continue;
       for (let j = i + 1; j < ps.length; j++) {
         const q = ps[j];
         if (!q.active || q.kind === 'trap' || q.owner === p.owner) continue;
-        if (!overlaps(p.box(), q.box())) continue;
+        if (!p.touches(q)) continue;
         const pd = p.durability;
         p.durability -= Math.max(1, Math.min(q.durability, 3));
         q.durability -= Math.max(1, Math.min(pd, 3));
         if (p.durability <= 0) p.dead = true;
         if (q.durability <= 0) q.dead = true;
-        this.emit({ t: 'clash', x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 });
+        this.emit({ t: 'clash', x: (p.x + q.x) / 2, y: (p.y + q.y) / 2, z: (p.z + q.z) / 2 });
       }
     }
 
@@ -855,7 +966,7 @@ export class Match {
         const target = p.owner.opponent!;
         if (p.kind === 'trap' && !target.grounded) continue;
         if (p.age - p.lastHitAge < p.rehit) continue;
-        const hurt = overlapsAny(p.box(), target.hurtboxes());
+        const hurt = target.hurtboxes().find((c) => p.overlaps(c));
         if (!hurt) continue;
         let hit = p.hit;
         if (p.hitsLeft === 1 && (p.kind === 'mega' || p.durability > 1) && p.hit.damage > 0) {
@@ -866,6 +977,7 @@ export class Match {
           projectile: p,
           x: (p.x + target.x) / 2,
           y: Math.max(0.3, Math.min(p.y, target.y + 1.6)),
+          z: (p.z + target.z) / 2,
         });
         if (res === 'miss' || res === 'reflect') continue;
         p.hitsLeft--;

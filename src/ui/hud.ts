@@ -15,6 +15,7 @@ export class Hud {
   private meter: HTMLElement[] = [];
   private meterBar: HTMLElement[] = [];
   private meterLabel: HTMLElement[] = [];
+  private lastLabel: string[] = ['', ''];
   private buffs: HTMLElement[] = [];
   private pips: HTMLElement[] = [];
   private timer: HTMLElement;
@@ -187,7 +188,15 @@ export class Hud {
       const full = f.meter >= MAX_METER;
       this.meterBar[i].classList.toggle('full', full);
       this.meterLabel[i].classList.toggle('full', full);
-      this.meterLabel[i].innerHTML = full ? `ULTIMATE READY ${this.app.glyph('UL', i as 0 | 1)}` : `ULTIMATE ${Math.floor(mp)}%`;
+      // Tekken Rage: below 25% health the Ultimate can be fired once as a Rage Art.
+      const rageArt = f.inRage && !f.rageArtUsed;
+      this.meterLabel[i].classList.toggle('rage', rageArt && !full);
+      this.hp[i].classList.toggle('rage', f.inRage);
+      const label = full ? `ULTIMATE READY ${this.app.glyph('UL', i as 0 | 1)}` : rageArt ? `RAGE ART ${this.app.glyph('UL', i as 0 | 1)}` : `ULTIMATE ${Math.floor(mp)}%`;
+      if (this.lastLabel[i] !== label) {
+        this.meterLabel[i].innerHTML = label;
+        this.lastLabel[i] = label;
+      }
       const b = f.buffs.map((x) => x.kind.toUpperCase()).join(' · ');
       const extra = f.passive === 'lifeline' && !f.lifelineUsed ? '♥ ' + f.def.passive.name : '';
       this.buffs[i].textContent = [b, extra].filter(Boolean).join('  ');

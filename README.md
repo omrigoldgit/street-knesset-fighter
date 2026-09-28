@@ -1,6 +1,7 @@
 # Street Knesset Fighter · סטריט כנסת פייטר
 
-A 3D, Street Fighter / Tekken-style **satirical fighting game** starring **40 members of the Knesset**.
+A 3D, **Tekken-style satirical fighting game** starring **40 members of the Knesset**: free 3D movement around a
+circular arena, sidesteps, launchers and juggles, wall splats and Rage Arts.
 Each MK has their own procedurally modelled caricature, fighting style, **3 unique special moves**, an **Ultimate**,
 and a **passive special ability**. It runs on PC in Chrome or Edge, or as a desktop app, and supports **PS5 DualSense controllers**
 out of the box. Keyboard works too.
@@ -62,20 +63,34 @@ It uploads a ready-to-run `Street Knesset Fighter` portable `.exe` as an artifac
 
 | DualSense | Action | Keyboard P1 | Keyboard P2 |
 |---|---|---|---|
-| D-pad / Left stick | Move, jump (↑), crouch (↓), block (hold ←) | W A S D | Arrow keys |
-| □ Square | Light Punch | U | Num 4 / Insert |
-| △ Triangle | Heavy Punch | I | Num 5 / Home |
-| ✕ Cross | Light Kick (menus: confirm) | J | Num 1 / Delete |
-| ○ Circle | Heavy Kick (menus: back) | K | Num 2 / End |
+| D-pad / Left stick | Move · tap ↑ / ↓ to sidestep · hold ↑ to jump · ↓ to crouch · stand still or hold ← to guard | W A S D | Arrow keys |
+| □ Square | **1** · Left Punch | U | Num 4 / Insert |
+| △ Triangle | **2** · Right Punch | I | Num 5 / Home |
+| ✕ Cross | **3** · Left Kick (menus: confirm) | J | Num 1 / Delete |
+| ○ Circle | **4** · Right Kick (menus: back) | K | Num 2 / End |
 | R1 | **Special** (neutral / → / ↓ picks Special 1 / 2 / 3) | O | Num 6 / PgUp |
-| R2 | **Ultimate** (full meter) | L | Num 3 / PgDn |
+| R2 | **Ultimate** (full meter), or **Rage Art** below 25% health | L | Num 3 / PgDn |
 | L2 | Throw | H | Num 0 |
-| L1 | Tekken-style sidestep | Space | Num . / Right Shift |
+| L1 | Sidestep (hold to sidewalk around the opponent) | Space | Num . / Right Shift |
 | Options | Pause | Esc / Enter | Num Enter |
 | Create | Reset positions (training) | Backspace | Num − |
 
 **Classic motion inputs work too:** `↓↘→ + P` = Special 1, `↓↙← + K` = Special 2, `→↓↘ + P` = Special 3,
-`↓↘→↓↘→ + P` = Ultimate. Light and heavy buttons give weaker, faster versions or stronger, farther ones.
+`↓↘→↓↘→ + P` = Ultimate.
+
+## How it plays (Tekken rules)
+
+- **Guard**: standing still (or holding ←) blocks highs and mids; crouching (↓ / ↙) blocks lows. Highs whiff over crouching fighters.
+- **3D movement**: the arena is a circle and the camera orbits with the fight. Tap ↑ or ↓ (or L1) to **sidestep**:
+  linear attacks miss, while homing moves (b+4 spinning heel, sweeps) track you. Hold L1 to **sidewalk**.
+- **Dash & run** with → →, and **Korean backdash** with ← ← ← … Run + 2 is a wall-splatting dash punch.
+- **Strings**: 1,1,2 · 2,1 · 3,4 (screw) · 4,4 · d/f+1,2.
+- **Launchers**: d/f+2, u/f+4 and WS 2 (release ↓ then 2) pop the opponent into a floaty **juggle**. Follow up before they
+  land; screw moves extend the combo.
+- **Walls**: heavy hits near the arena edge cause a **wall splat**, a free follow-up.
+- **Ground game**: press any attack as you land to **tech roll**, or any input to get up. Some lows hit grounded fighters.
+- **Rage**: below 25% health you glow red and can fire your Ultimate once as a **Rage Art**, even without meter.
+- Every fighter keeps their unique **3 specials, Ultimate and passive** on top of the shared Tekken command list.
 
 ## Real faces
 
@@ -91,13 +106,18 @@ to procedural caricatures.
 - **3 specials + Ultimate + passive per fighter**, built from 18 special archetypes (projectiles, lobs, beams, rushes,
   invincible uppercuts, command grabs, counters, teleports, traps, ground waves, dive kicks, slams, rains, shields, reflectors,
   buffs, heals, pulls) and 5 Ultimate types, including cinematic multi-hit supers with camera work
-- **Real fighting-game engine**: fixed 60 Hz deterministic sim; startup/active/recovery frame data; hitstop; chains and special/super cancels;
-  combo scaling; juggles; high/low/overhead blocking; chip damage; throws and throw techs; counter-hits; armor; invincibility;
-  knockdowns and wake-up; projectile clashes; corner pushback; Tekken-style sidestep
+- **Tekken-style 3D engine**: fixed 60 Hz deterministic sim on a circular 3D arena; facing and turn rates, with linear vs
+  homing attacks judged by lateral hitbox width; startup/active/recovery frame data; hitstop; strings and special/super cancels;
+  launchers, floaty juggles, screws, wall splats, tech rolls; Tekken guard (high/mid/low); throws and throw breaks;
+  counter-hits and crumples; armor; invincibility; projectile clashes; Rage and Rage Arts
+- **Animation**: spring-driven joints for snap and follow-through, two-bone leg IK with planted feet and a stepping gait,
+  and hit reactions that snap the head back on highs and fold the body on mids
 - **Modes**: Arcade (7 MKs plus a final boss, with continues and an ending), Versus (local 2P), Training (dummy settings, hitboxes, input display),
   CPU vs CPU
-- **CPU AI** with 5 difficulty levels (*Backbencher* to *Supreme Court*): blocks, anti-airs, hit-confirms and uses each character's kit sensibly
-- **6 stages**: The Plenum, Menorah Plaza, Finance Committee, Tel Aviv Beach, Mahane Yehuda, Azrieli Rooftop
+- **CPU AI** with 5 difficulty levels (*Backbencher* to *Supreme Court*): guards, ducks highs, sidesteps linear moves,
+  punishes on block, launches and juggles, tech rolls, and uses each character's kit
+- **6 360° stages** with walls: The Plenum, Menorah Plaza, Finance Committee, Tel Aviv Beach, Mahane Yehuda, Azrieli Rooftop.
+  Scenery between the camera and the fighters is cut away automatically
 - **Procedural audio**: synthesized hit and whoosh SFX, a per-stage music sequencer, and a speech-synth announcer ("Round one… Fight!")
 - Full move list for every fighter, controller remapping, rumble, options saved locally, and a Low graphics mode for integrated GPUs
 
@@ -150,15 +170,16 @@ to procedural caricatures.
 
 ```
 src/
-  game/      Pure-TypeScript fighting engine (no rendering): fighter state machine, frame data,
-             specials builder, projectiles, hit resolution, round flow, CPU AI
+  game/      Pure-TypeScript fighting engine (no rendering): 3D fighter state machine, Tekken move list
+             and frame data, specials builder, projectiles, hit resolution, round flow, CPU AI
   data/      Roster (40 characters), parties, stages. Edit these to tweak the game.
-  render/    Three.js: procedural character rigs, frame-driven pose animation, props, stages,
-             particles, camera direction, portrait renderer
+  render/    Three.js: procedural character rigs, spring + leg-IK animation, props, 360° stages,
+             particles, orbiting fight camera, portrait renderer, photo faces
   core/      Input (keyboard + Gamepad API / DualSense), WebAudio synth + music, settings
   ui/        Screens (title, menus, character/stage select, VS, fight + HUD, results, arcade, move list, controls, options)
 electron/    Desktop shell
-tests/       Headless engine tests: every special for all 40 fighters, full CPU matches, DualSense mapping
+tests/       Headless engine tests: every special for all 40 fighters, Tekken mechanics (guard, sidestep vs homing,
+             launch → juggle, wall splat, tech roll, camera axis), full CPU matches, DualSense mapping
 ```
 
 ```bash

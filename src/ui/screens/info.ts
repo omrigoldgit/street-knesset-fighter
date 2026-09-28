@@ -1,7 +1,7 @@
 import { ACTIONS, ACTION_NAMES, KEYBOARD_P1, KEYBOARD_P2, keyLabel, type Action, type GlyphStyle } from '../../core/input';
 import { ROSTER } from '../../data/roster';
 import type { CharacterDef } from '../../game/characterTypes';
-import { STYLE_INFO } from '../../game/normals';
+import { NORMAL_LIST, STYLE_INFO } from '../../game/normals';
 import { specialDesc, ultimateDesc } from '../../game/specials';
 import type { App, Screen } from '../app';
 import { MenuList, MOTION, el, esc, partyChip, portraitHTML, readable } from '../dom';
@@ -11,6 +11,17 @@ const SLOT_INPUT = [
   { motion: MOTION.qcb, btn: 'K', dir: '→ +' },
   { motion: MOTION.dp, btn: 'P', dir: '↓ +' },
 ];
+
+const DIR_ARROWS: Record<string, string> = { 'd/f': '↘', 'd/b': '↙', 'u/f': '↗', 'u/b': '↖', f: '→', b: '←', d: '↓', u: '↑' };
+const BUTTONS: Record<string, Action> = { 1: 'LP', 2: 'HP', 3: 'LK', 4: 'HK' };
+
+/** Tekken notation ("d/f+2", "f,f+2", "1,1") → arrows and button glyphs. */
+export function notation(input: string, g: (a: Action) => string): string {
+  return input
+    .split(/(d\/f|d\/b|u\/f|u\/b|\b[fbdu]\b|[1-4])/)
+    .map((tok) => (DIR_ARROWS[tok] ? `<span class="arrow">${DIR_ARROWS[tok]}</span>` : BUTTONS[tok] ? g(BUTTONS[tok]) : esc(tok)))
+    .join('');
+}
 
 function pk(app: App, which: 'P' | 'K', slot: 0 | 1, style: GlyphStyle): string {
   return which === 'P'
@@ -35,18 +46,27 @@ export function moveListHTML(app: App, def: CharacterDef, slot: 0 | 1 = 0): stri
     <td class="ds">${esc(ultimateDesc(def.ultimate))}</td></tr>`);
   rows.push('<tr class="hdr"><td colspan="3">PASSIVE ABILITY</td></tr>');
   rows.push(`<tr><td class="mv">${esc(def.passive.name)}</td><td class="in">Always on</td><td class="ds">${esc(def.passive.desc)}</td></tr>`);
-  rows.push('<tr class="hdr"><td colspan="3">UNIVERSAL</td></tr>');
+  rows.push('<tr class="hdr"><td colspan="3">SYSTEM</td></tr>');
   const uni: [string, string, string][] = [
-    ['Throw', `${g('TH')} <span style="color:var(--muted)">or</span> ${g('LP')}+${g('LK')}`, 'Close range. Hold ← to throw backwards. Tech by pressing throw as you are grabbed.'],
-    ['Sidestep', g('SS'), 'Tekken-style step into the background (hold ↓ to step toward the camera). Dodges projectiles and most strikes.'],
-    ['Overhead Chop', `→ + ${g('HP')}`, 'Slow, but must be blocked standing.'],
-    ['Anti-air Uppercut', `↓ + ${g('HP')}`, 'Launches airborne opponents.'],
-    ['Sweep', `↓ + ${g('HK')}`, 'Low. Knocks down.'],
-    ['Dash', '→ → / ← ←', 'Quick burst of movement.'],
-    ['Block', 'Hold ← (↙ for lows)', 'Block high/mid standing, lows crouching. Jump-ins and overheads must be blocked standing.'],
-    ['Chains & cancels', `${g('LP')} → ${g('HP')} → Special → ${g('UL')}`, 'Light attacks chain into heavies. Normals cancel into specials; specials that hit cancel into the Ultimate.'],
+    ['Guard', 'Stand still / hold ← · hold ↓ or ↙', 'Tekken guard: standing blocks highs and mids, crouching blocks lows. Highs whiff over crouching opponents.'],
+    ['Sidestep', `${g('SS')} <span style="color:var(--muted)">or tap</span> ↑ / ↓`, 'Step into the background or toward the camera. Linear attacks miss; homing moves track you.'],
+    ['Sidewalk', `Hold ${g('SS')}`, 'Circle around your opponent.'],
+    ['Dash · Run', '→ → (hold →)', 'Dash in; keep holding to run. Run + 2 is the Dash Punch.'],
+    ['Backdash', '← ← (repeat)', 'Chain backdashes to escape (Korean backdash).'],
+    ['Throw', `${g('TH')} <span style="color:var(--muted)">or</span> ${g('LP')}+${g('LK')}`, 'Close range. Hold ← to throw backwards. Break it by pressing throw, 1 or 2 as you are grabbed.'],
+    ['Launch & juggle', `↘ ${g('HP')} · ↗ ${g('HK')} · WS ${g('HP')}`, 'Launchers pop the opponent into the air: follow up with strings before they land. Screw moves extend the juggle.'],
+    ['Walls', '—', 'Heavy hits near the arena edge cause a wall splat: free follow-up.'],
+    ['Tech roll · Get up', `Any attack as you land · any input`, 'Roll away when you hit the floor, or get up when you choose.'],
+    ['Rage', `Below 25% health: ${g('UL')}`, 'Red aura. Fire your Ultimate as a Rage Art without meter, once per round.'],
+    ['Cancels', `Normal → Special → ${g('UL')}`, 'Normals that connect cancel into specials; specials that hit cancel into the Ultimate.'],
   ];
   for (const [n, i, d] of uni) rows.push(`<tr><td class="mv">${n}</td><td class="in">${i}</td><td class="ds">${d}</td></tr>`);
+  rows.push(`<tr class="hdr"><td colspan="3">COMMAND LIST · ${g('LP')}=1 ${g('HP')}=2 ${g('LK')}=3 ${g('HK')}=4</td></tr>`);
+  const LEVEL: Record<string, string> = { high: 'High', mid: 'Mid', low: 'Low', overhead: 'Mid', unblockable: '!' };
+  for (const n of NORMAL_LIST) {
+    rows.push(`<tr><td class="mv">${esc(n.name)} <span style="color:var(--muted);font-size:12px">${LEVEL[n.guard] ?? ''}</span></td>
+      <td class="in">${notation(n.input, g)}</td><td class="ds">${esc(n.desc ?? '')}</td></tr>`);
+  }
   return `<div class="ml-head">${portraitHTML(def)}<div><div class="display" style="font-size:40px;line-height:1">${esc(def.name)}</div>
     <div style="font-size:20px"><span class="he">${esc(def.nameHe)}</span></div>${partyChip(def)}
     <div style="color:var(--muted);margin-top:4px">${esc(def.role)} · ${esc(STYLE_INFO[def.style])}</div>
