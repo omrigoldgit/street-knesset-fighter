@@ -10,13 +10,31 @@ out of the box. Keyboard works too.
 
 ---
 
-## Quick start
+## Play now (no install)
 
-Requires [Node.js](https://nodejs.org) 20+.
+Requires only [Node.js](https://nodejs.org) 20+. The prebuilt game is in `dist/`, so there is **no `npm install`**.
+That also sidesteps Windows *Smart App Control*, which can block the build tools' native binaries.
+
+**Windows PowerShell: paste once:**
+
+```powershell
+$ProgressPreference = 'SilentlyContinue'
+$d = "$HOME\Downloads\skf-play"
+Remove-Item $d, "$d.zip" -Recurse -Force -ErrorAction SilentlyContinue
+Invoke-WebRequest "https://github.com/omrigoldgit/street-knesset-fighter/archive/refs/heads/claude/blissful-cerf-2sdwqh.zip" -OutFile "$d.zip"
+Expand-Archive "$d.zip" $d
+Set-Location (Get-ChildItem $d -Directory)[0].FullName
+node play.mjs
+```
+
+Or, from any copy of the repo: `node play.mjs`. It serves the game on http://localhost:5173 and opens your browser (use Chrome or Edge).
+
+## Development
 
 ```bash
 npm install
-npm run dev          # then open http://localhost:5173 in Chrome or Edge
+npm run dev          # hot-reloading dev server on http://localhost:5173
+npm run build        # refreshes dist/ (commit it so `node play.mjs` stays current)
 ```
 
 ### Desktop app (Windows / macOS / Linux)

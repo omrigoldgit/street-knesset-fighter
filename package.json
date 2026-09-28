@@ -8,6 +8,7 @@
   "author": "Street Knesset Fighter contributors",
   "license": "MIT",
   "scripts": {
+    "play": "node play.mjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
@@ -33,10 +34,32 @@
   "build": {
     "appId": "com.streetknesset.fighter",
     "productName": "Street Knesset Fighter",
-    "directories": { "output": "release" },
-    "files": ["dist/**/*", "electron/**/*", "package.json"],
-    "win": { "target": ["portable", "zip"], "signAndEditExecutable": false },
-    "linux": { "target": ["AppImage"], "category": "Game" },
-    "mac": { "target": ["dmg"], "category": "public.app-category.games" }
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "portable",
+        "zip"
+      ],
+      "signAndEditExecutable": false
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Game"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.games"
+    }
   }
 }
