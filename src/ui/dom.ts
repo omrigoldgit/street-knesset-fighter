@@ -143,10 +143,3 @@ export class MenuList {
     }
   }
 }
-
-export const MOTION = {
-  qcf: '↓↘→',
-  qcb: '↓↙←',
-  dp: '→↓↘',
-  dqcf: '↓↘→↓↘→',
-};

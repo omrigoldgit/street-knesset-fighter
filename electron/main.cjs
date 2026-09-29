@@ -1,4 +1,4 @@
-// Electron desktop shell for Street Knesset Fighter.
+// Electron desktop shell for Iron Knesset.
 // Loads the Vite build from dist/ and enables autoplay so sound works
 // even when the first input comes from a PS5 controller.
 const { app, BrowserWindow, Menu, ipcMain } = require('electron');
@@ -13,7 +13,7 @@ function createWindow() {
     minWidth: 960,
     minHeight: 540,
     backgroundColor: '#05070d',
-    title: 'Street Knesset Fighter',
+    title: 'Iron Knesset',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),

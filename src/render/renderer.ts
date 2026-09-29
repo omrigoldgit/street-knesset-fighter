@@ -18,6 +18,7 @@ import { faceTexture, photoHead } from './faces';
 import { EnvBuilder } from './env';
 import { PostFX } from './post';
 import type { Quality } from '../core/settings';
+import { personaFor, type GestureId } from '../data/personas';
 
 const NEXT_LOWER: Record<Quality, Quality | null> = { ultra: 'high', high: 'low', low: null };
 
@@ -45,6 +46,7 @@ class FighterView {
     // Best available head: 3D photo face, else the flat photo card, else the caricature.
     const photo = photoHead(def.id);
     this.rig = buildCharacter(def, { photo, face: photo ? null : faceTexture(def.id) });
+    this.anim.setPersona(personaFor(def.id, def.style));
     this.shield = new THREE.Mesh(new THREE.SphereGeometry(1.05, 24, 16), additive(0x9fd3ff, 0.22));
     this.shield.position.y = 0.95;
     this.shield.visible = false;
@@ -258,9 +260,13 @@ export interface ShowcaseSlot {
   facing: number;
   pose: 'guard' | 'victory' | 'intro';
   variant?: number;
+  /** Force a specific gesture instead of the fighter's own intro / victory. */
+  gesture?: GestureId;
 }
 
-const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+type ShowcaseEntry = { view: FighterView; slot: ShowcaseSlot; since: number };
+
+const clamp =(v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
 export class GameRenderer {
   renderer: THREE.WebGLRenderer;
@@ -274,7 +280,7 @@ export class GameRenderer {
   private stageId = '';
   private views: FighterView[] = [];
   private projViews = new Map<number, ProjectileView>();
-  private showcase: ({ view: FighterView; slot: ShowcaseSlot } | undefined)[] = [];
+  private showcase: (ShowcaseEntry | undefined)[] = [];
   private camPos = new THREE.Vector3(0, 1.8, 8);
   private camLook = new THREE.Vector3(0, 1.1, 0);
   private shake = 0;
@@ -713,7 +719,7 @@ export class GameRenderer {
       const view = new FighterView(slot.def);
       view.rig.root.position.set(slot.x, 0, 0);
       this.scene.add(view.rig.root);
-      return { view, slot };
+      return { view, slot, since: this.time };
     });
     this.platform.visible = withPlatform && slots.length > 0;
     this.views.forEach((v) => (v.rig.root.visible = false));
@@ -722,6 +728,8 @@ export class GameRenderer {
   updateShowcaseSlot(i: number, slot: ShowcaseSlot | null): void {
     const cur = this.showcase[i];
     if (cur && slot && cur.slot.def.id === slot.def.id) {
+      // Restart the gesture when the pose changes (e.g. a fighter gets picked).
+      if (cur.slot.pose !== slot.pose || cur.slot.gesture !== slot.gesture) cur.since = this.time;
       cur.slot = slot;
       return;
     }
@@ -735,7 +743,7 @@ export class GameRenderer {
     }
     const view = new FighterView(slot.def);
     this.scene.add(view.rig.root);
-    this.showcase[i] = { view, slot };
+    this.showcase[i] = { view, slot, since: this.time };
   }
 
   syncShowcase(dt: number, cam: { pos: [number, number, number]; look: [number, number, number] }): void {
@@ -744,7 +752,7 @@ export class GameRenderer {
     this.showcase.forEach((entry, i) => {
       if (!entry) return;
       const { view, slot } = entry;
-      view.anim.showcase(dt, this.time, slot.pose, slot.variant ?? 0, i * 1.7);
+      view.anim.showcase(dt, this.time, slot.pose, slot.variant ?? 0, i * 1.7, slot.gesture, entry.since);
       view.anim.apply(view.rig);
       const root = view.rig.root;
       root.visible = true;

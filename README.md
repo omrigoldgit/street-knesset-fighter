@@ -1,9 +1,9 @@
-# Street Knesset Fighter · סטריט כנסת פייטר
+# Iron Knesset · טורניר כנסת הברזל
 
 A 3D, **Tekken-style satirical fighting game** starring **40 members of the Knesset**: free 3D movement around a
 circular arena, sidesteps, launchers and juggles, wall splats and Rage Arts.
-Each MK has their own procedurally modelled caricature, fighting style, **3 unique special moves**, an **Ultimate**,
-and a **passive special ability**. It runs on PC in Chrome or Edge, or as a desktop app, and supports **PS5 DualSense controllers**
+Each MK gets a **3D head built from their real photo**, their own fighting stance and signature intro/victory gestures,
+**3 unique special moves**, a **Heat Smash**, and a **passive special ability**. It runs on PC in Chrome or Edge, or as a desktop app, and supports **PS5 DualSense controllers**
 out of the box. Keyboard works too.
 
 > ⚠️ **Parody.** Every character is a caricature of a public figure. Moves, bios and quotes are affectionate political satire,
@@ -51,7 +51,7 @@ npm run dist:win     # builds a portable .exe + .zip into release/ (run on Windo
 ```
 
 No Windows machine handy? Run the **Build** workflow from the repo's GitHub **Actions** tab (`workflow_dispatch`).
-It uploads a ready-to-run `Street Knesset Fighter` portable `.exe` as an artifact.
+It uploads a ready-to-run `Iron Knesset` portable `.exe` as an artifact.
 
 ## PS5 DualSense setup
 
@@ -69,14 +69,11 @@ It uploads a ready-to-run `Street Knesset Fighter` portable `.exe` as an artifac
 | ✕ Cross | **3** · Left Kick (menus: confirm) | J | Num 1 / Delete |
 | ○ Circle | **4** · Right Kick (menus: back) | K | Num 2 / End |
 | R1 | **Special** (neutral / → / ↓ picks Special 1 / 2 / 3) | O | Num 6 / PgUp |
-| R2 | **Ultimate** (full meter), or **Rage Art** below 25% health | L | Num 3 / PgDn |
+| R2 | **Heat Smash** (full Heat gauge), or **Rage Art** below 25% health | L | Num 3 / PgDn |
 | L2 | Throw | H | Num 0 |
 | L1 | Sidestep (hold to sidewalk around the opponent) | Space | Num . / Right Shift |
 | Options | Pause | Esc / Enter | Num Enter |
 | Create | Reset positions (training) | Backspace | Num − |
-
-**Classic motion inputs work too:** `↓↘→ + P` = Special 1, `↓↙← + K` = Special 2, `→↓↘ + P` = Special 3,
-`↓↘→↓↘→ + P` = Ultimate.
 
 ## How it plays (Tekken rules)
 
@@ -89,23 +86,31 @@ It uploads a ready-to-run `Street Knesset Fighter` portable `.exe` as an artifac
   land; screw moves extend the combo.
 - **Walls**: heavy hits near the arena edge cause a **wall splat**, a free follow-up.
 - **Ground game**: press any attack as you land to **tech roll**, or any input to get up. Some lows hit grounded fighters.
-- **Rage**: below 25% health you glow red and can fire your Ultimate once as a **Rage Art**, even without meter.
-- Every fighter keeps their unique **3 specials, Ultimate and passive** on top of the shared Tekken command list.
+- **Heat**: landing and taking hits fills your Heat gauge. Full Heat + R2 fires your **Heat Smash**.
+- **Rage**: below 25% health you glow red and can fire your Heat Smash once as a **Rage Art**, even with an empty gauge.
+- Every fighter keeps their unique **3 specials, Heat Smash and passive** on top of the shared Tekken command list.
 
 ## Real faces
 
 By default the game loads each MK's **freely licensed lead photo from Wikipedia** (CC BY / CC BY-SA / public domain only)
-in your browser. It detects the face with MediaPipe and puts it on the fighter as a big photo head. Photo credits are in
+in your browser. MediaPipe Face Mesh reconstructs a **468-point 3D face** from the photo. That face is wrapped onto a sculpted
+skull with fitted hair, ears and headwear, and the body's skin tone is sampled from the photo. The first visit downloads
+the face models (~10 MB) and scans all 40 faces once. The results are cached in your browser, so later visits load instantly. Photo credits are in
 **Main menu → Credits**. **Main menu → Faces** lets you fix any crop, upload your own photo (kept in your browser only),
 or switch a single MK back to the cartoon. **Options → Faces → Cartoon** turns photos off entirely. Offline, the game falls back
 to procedural caricatures.
 
 ## Features
 
-- **40 playable MKs** across 13 parties, each with a unique procedural 3D caricature (hair, beards, kippot, hats, glasses, suits, party pin)
-- **3 specials + Ultimate + passive per fighter**, built from 18 special archetypes (projectiles, lobs, beams, rushes,
+- **40 playable MKs** across 13 parties, each with a 3D photo-scanned face, fitted hair, beards, kippot, hats, glasses, and a tailored suit or outfit with party pin
+- **Graphics**: physically based materials with image-based lighting per stage, a skinned one-piece body mesh with
+  painted and normal-mapped cloth (suit weave, lapels, ties, creased trousers), soft shadows, ambient occlusion, HDR bloom, colour grading,
+  and hit-flash/chromatic pulses. **Options → Graphics Quality** has Ultra / High / Low, and the game steps down automatically if the frame rate drops
+- **Personas**: every MK has a fighting stance (boxer, karate, wrestler, brawler, long guard, MMA, statesman) and their own intro and
+  victory gestures (podium speech, salute, phone call, arms crossed, victory V…) with hand poses
+- **3 specials + Heat Smash + passive per fighter**, built from 18 special archetypes (projectiles, lobs, beams, rushes,
   invincible uppercuts, command grabs, counters, teleports, traps, ground waves, dive kicks, slams, rains, shields, reflectors,
-  buffs, heals, pulls) and 5 Ultimate types, including cinematic multi-hit supers with camera work
+  buffs, heals, pulls) and 5 Heat Smash types, including cinematic multi-hit supers with camera work
 - **Tekken-style 3D engine**: fixed 60 Hz deterministic sim on a circular 3D arena; facing and turn rates, with linear vs
   homing attacks judged by lateral hitbox width; startup/active/recovery frame data; hitstop; strings and special/super cancels;
   launchers, floaty juggles, screws, wall splats, tech rolls; Tekken guard (high/mid/low); throws and throw breaks;
@@ -119,11 +124,11 @@ to procedural caricatures.
 - **6 360° stages** with walls: The Plenum, Menorah Plaza, Finance Committee, Tel Aviv Beach, Mahane Yehuda, Azrieli Rooftop.
   Scenery between the camera and the fighters is cut away automatically
 - **Procedural audio**: synthesized hit and whoosh SFX, a per-stage music sequencer, and a speech-synth announcer ("Round one… Fight!")
-- Full move list for every fighter, controller remapping, rumble, options saved locally, and a Low graphics mode for integrated GPUs
+- Full move list for every fighter, controller remapping, rumble, and options saved locally
 
 ## The roster
 
-| # | Fighter | Party | Style | Specials (S1 · S2 · S3) | Ultimate | Passive |
+| # | Fighter | Party | Style | Specials (S1 · S2 · S3) | Heat Smash | Passive |
 |---|---|---|---|---|---|---|
 | 1 | **Benjamin Netanyahu** (בנימין נתניהו) | Likud | Technician | Red Line Bomb · Coalition Shuffle · Iron Dome | Sixth Term | Political Survivor |
 | 2 | **Yariv Levin** (יריב לוין) | Likud | Zoner | Judicial Gavel · Reasonableness Clause · Committee Selection | The Overhaul | Override Clause |

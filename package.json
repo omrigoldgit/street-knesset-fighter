@@ -5,7 +5,7 @@
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",
-  "author": "Street Knesset Fighter contributors",
+  "author": "Iron Knesset contributors",
   "license": "MIT",
   "scripts": {
     "play": "node play.mjs",
@@ -33,7 +33,7 @@
   },
   "build": {
     "appId": "com.streetknesset.fighter",
-    "productName": "Street Knesset Fighter",
+    "productName": "Iron Knesset",
     "directories": {
       "output": "release"
     },

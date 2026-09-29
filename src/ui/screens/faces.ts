@@ -279,7 +279,7 @@ export class CreditsScreen implements Screen {
       .join('');
     const page = el('div', 'page');
     page.innerHTML = `<h1 class="display">Credits</h1>
-      <div class="sub">Street Knesset Fighter is a parody. MK photos are loaded live from Wikipedia / Wikimedia Commons under the free licences listed below,
+      <div class="sub">Iron Knesset is a parody. MK photos are loaded live from Wikipedia / Wikimedia Commons under the free licences listed below,
       cropped and used as caricature heads. Photos remain the work of their authors. Photos you upload stay in your browser only.</div>
       ${credits.length ? `<table class="ml-table cr-table"><tr class="hdr"><td></td><td>MK</td><td>Photographer / author</td><td>Licence</td><td>Source file</td></tr>${rows}</table>` : '<p>No photos loaded (offline, blocked, or Faces set to Cartoon).</p>'}
       <p class="sub" style="margin-top:24px">Code: TypeScript + three.js. Face detection: MediaPipe (Apache 2.0). Music, sound and 3D models are generated procedurally.</p>`;

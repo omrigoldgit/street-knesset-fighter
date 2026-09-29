@@ -70,7 +70,7 @@ export class Hud {
     m.fighters.forEach((_, i) => {
       const side = i === 0 ? 'l' : 'r';
       const w = el('div', `meter-wrap ${side}`);
-      w.innerHTML = `<div class="buffs"></div><div class="meter-label">ULTIMATE</div><div class="meter"><i></i></div>`;
+      w.innerHTML = `<div class="buffs"></div><div class="meter-label">HEAT</div><div class="meter"><i></i></div>`;
       this.meter[i] = w.querySelector('.meter i') as HTMLElement;
       this.meterBar[i] = w.querySelector('.meter') as HTMLElement;
       this.meterLabel[i] = w.querySelector('.meter-label') as HTMLElement;
@@ -138,7 +138,7 @@ export class Hud {
         break;
       case 'superFlash': {
         const f = m.fighters[ev.fighter];
-        (this.banner.querySelector('.who') as HTMLElement).textContent = `${f.def.name.toUpperCase()} · ULTIMATE`;
+        (this.banner.querySelector('.who') as HTMLElement).textContent = `${f.def.name.toUpperCase()} · HEAT SMASH`;
         const mv = this.banner.querySelector('.mv') as HTMLElement;
         mv.textContent = ev.name;
         mv.style.color = readable(ev.color);
@@ -188,11 +188,11 @@ export class Hud {
       const full = f.meter >= MAX_METER;
       this.meterBar[i].classList.toggle('full', full);
       this.meterLabel[i].classList.toggle('full', full);
-      // Tekken Rage: below 25% health the Ultimate can be fired once as a Rage Art.
+      // Tekken Rage: below 25% health the Heat Smash can be fired once as a Rage Art.
       const rageArt = f.inRage && !f.rageArtUsed;
       this.meterLabel[i].classList.toggle('rage', rageArt && !full);
       this.hp[i].classList.toggle('rage', f.inRage);
-      const label = full ? `ULTIMATE READY ${this.app.glyph('UL', i as 0 | 1)}` : rageArt ? `RAGE ART ${this.app.glyph('UL', i as 0 | 1)}` : `ULTIMATE ${Math.floor(mp)}%`;
+      const label = full ? `HEAT MAX ${this.app.glyph('UL', i as 0 | 1)}` : rageArt ? `RAGE ART ${this.app.glyph('UL', i as 0 | 1)}` : `HEAT ${Math.floor(mp)}%`;
       if (this.lastLabel[i] !== label) {
         this.meterLabel[i].innerHTML = label;
         this.lastLabel[i] = label;

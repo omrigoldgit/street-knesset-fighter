@@ -11,7 +11,7 @@ import { InputHistory, isBack, isDown, isUp, toRelative } from './motion';
 import { buildNormals, buildThrow, type NormalId } from './normals';
 import { buildSpecial, buildUltimate } from './specials';
 import {
-  ATTACKS, BTN, KICKS, NO_INPUT, PUNCHES,
+  ATTACKS, BTN, NO_INPUT,
   type Box, type Buff, type BuffKind, type Cyl, type GuardType, type InvulnKind, type MoveCtx, type MoveDef, type PlayerInput,
 } from './types';
 import { leftOf, turnToward, wrapAngle, type V2 } from './vec';
@@ -844,31 +844,13 @@ export class Fighter {
 
   // ---------------------------------------------------------------- attacks
 
+  /** Special moves are on their own button (Tekken style): neutral, forward or down + Special. */
   private pickSpecial(air: boolean): [MoveDef, number] | null {
-    const h = this.history;
+    if (!this.history.buffered(BTN.SP)) return null;
     const d = this.relDir;
-    let idx = -1;
-    let str = 0.5;
-    if (h.buffered(BTN.SP)) {
-      idx = isDown(d) ? 2 : d === 6 || d === 9 ? 1 : 0;
-    } else {
-      const p = h.buffered(PUNCHES);
-      const k = h.buffered(KICKS);
-      if (p && h.motion('dp')) {
-        idx = 2;
-        str = p & BTN.HP ? 1 : 0;
-      } else if (p && h.motion('qcf')) {
-        idx = 0;
-        str = p & BTN.HP ? 1 : 0;
-      } else if (k && h.motion('qcb')) {
-        idx = 1;
-        str = k & BTN.HK ? 1 : 0;
-      }
-    }
-    if (idx < 0) return null;
-    const mv = this.moves.specials[idx];
+    const mv = this.moves.specials[isDown(d) ? 2 : d === 6 || d === 9 ? 1 : 0];
     if (air && !mv.airOK) return null;
-    return [mv, str];
+    return [mv, 0.5];
   }
 
   /** Tekken input → move. 1 = LP, 2 = HP, 3 = LK, 4 = HK; directions are relative to facing. */
@@ -914,7 +896,7 @@ export class Fighter {
     const ult = this.moves.ultimate;
     const rageArt = this.inRage && !this.rageArtUsed;
     if (this.meter < ULT_COST && !m.infiniteMeter(this) && !rageArt) return false;
-    if (h.buffered(BTN.UL) || (h.buffered(PUNCHES) && h.motion('dqcf'))) {
+    if (h.buffered(BTN.UL)) {
       if (this.canUse(ult, m)) {
         h.consume(BTN.UL | ATTACKS | BTN.SP);
         if (this.meter < ULT_COST && !m.infiniteMeter(this)) {

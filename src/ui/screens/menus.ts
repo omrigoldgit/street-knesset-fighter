@@ -28,7 +28,7 @@ export class BootScreen implements Screen {
 
   enter(): void {
     const w = el('div', 'loading');
-    w.innerHTML = `<div class="logo"><span class="l1">Street</span><span class="l2">Knesset</span><span class="l3">Fighter</span></div>
+    w.innerHTML = `<div class="logo"><span class="l1">Iron</span><span class="l2">Knesset</span><span class="l3">Tournament</span></div>
       <div class="bar"><i style="width:0%"></i></div><div class="boot-msg" style="color:var(--muted);text-align:center">Drafting 40 members of Knesset…</div>`;
     this.app.ui.appendChild(w);
     this.bar = w.querySelector('.bar i') as HTMLElement;
@@ -88,7 +88,7 @@ export class TitleScreen implements Screen {
     menuBackdrop(app, true);
     app.renderer.snapCamera([0, 1.6, 6.5], [0, 1.2, 0]);
     const w = el('div', 'title-wrap');
-    w.innerHTML = `<div class="logo"><span class="l1">Street</span><span class="l2">Knesset</span><span class="l3">Fighter</span><span class="sub"><span class="he">סטריט כנסת פייטר</span> · 40 MKs · ONE PLENUM</span></div>
+    w.innerHTML = `<div class="logo"><span class="l1">Iron</span><span class="l2">Knesset</span><span class="l3">Tournament</span><span class="sub"><span class="he">טורניר כנסת הברזל</span> · 40 MKs · ONE PLENUM</span></div>
       <div class="press blink">PRESS ${app.mg('confirm')} / ENTER</div>
       <div class="pads-status"></div>
       <div class="disclaimer">A parody fighting game. All characters are caricatures of public figures; moves and quotes are satire, not real statements.</div>`;
@@ -143,7 +143,7 @@ export class MainMenuScreen implements Screen {
       { label: 'Versus', desc: 'Two players, one plenum. Local multiplayer.', onSelect: start('versus') },
       { label: 'Training', desc: 'Practice combos against a dummy. Infinite health and meter.', onSelect: start('training') },
       { label: 'CPU vs CPU', desc: 'Sit back and watch two CPUs debate.', onSelect: start('watch') },
-      { label: 'Move Lists', desc: 'Every special move, ultimate and passive for all 40 fighters.', onSelect: () => app.go(new MoveListScreen(app, 0, () => app.go(new MainMenuScreen(app)))) },
+      { label: 'Move Lists', desc: 'Every special move, Heat Smash and passive for all 40 fighters.', onSelect: () => app.go(new MoveListScreen(app, 0, () => app.go(new MainMenuScreen(app)))) },
       { label: 'Controls', desc: 'PS5 DualSense and keyboard layouts, controller assignment and remapping.', onSelect: () => app.go(new ControlsScreen(app, () => app.go(new MainMenuScreen(app)))) },
       { label: 'Faces', desc: 'Adjust any MK’s photo crop, or upload your own photo.', onSelect: () => app.go(new FaceEditorScreen(app, () => app.go(new MainMenuScreen(app)))) },
       { label: 'Credits', desc: 'Photo credits and licences.', onSelect: () => app.go(new CreditsScreen(app, () => app.go(new MainMenuScreen(app)))) },
@@ -154,7 +154,7 @@ export class MainMenuScreen implements Screen {
     this.menu.index = Math.min(MainMenuScreen.lastIndex, items.length - 1);
     this.menu.render();
     const w = el('div', 'mainmenu');
-    w.innerHTML = `<div class="logo"><span class="l1">Street</span><span class="l2">Knesset</span><span class="l3">Fighter</span></div>`;
+    w.innerHTML = `<div class="logo"><span class="l1">Iron</span><span class="l2">Knesset</span><span class="l3">Tournament</span></div>`;
     w.appendChild(this.menu.el);
     const hint = el('div', 'hint', `${app.mg('confirm')} Select ${app.mg('back')} Back`);
     app.ui.append(w, hint);

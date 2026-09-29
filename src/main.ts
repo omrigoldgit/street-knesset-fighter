@@ -24,6 +24,18 @@ if (new URLSearchParams(location.search).has('debug')) {
       app.renderer.setStage(STAGE_BY_ID[stage]);
       app.renderer.setShowcase(ids.map((id, i) => ({ def: ROSTER_BY_ID[id], x: (i - (ids.length - 1) / 2) * 1.1, facing, pose })), false);
     },
+    /** Lines up MKs performing the given gestures (or stances when gesture is 'guard'), frozen at time `at`. */
+    gallery(ids: string[], gestures: string[], stage = 'plenum', cam: { pos: [number, number, number]; look: [number, number, number] } = { pos: [0, 1.4, 5.2], look: [0, 1.1, 0] }) {
+      app.renderer.setStage(STAGE_BY_ID[stage]);
+      app.renderer.setShowcase(ids.map((id, i) => ({
+        def: ROSTER_BY_ID[id],
+        x: (i - (ids.length - 1) / 2) * 1.05,
+        facing: 1,
+        pose: gestures[i] === 'guard' ? 'guard' as const : 'victory' as const,
+        gesture: gestures[i] === 'guard' ? undefined : gestures[i] as never,
+      })), false);
+      app.go({ enter() {}, exit() {}, tick() {}, frame: (dt: number) => app.renderer.syncShowcase(dt, cam) });
+    },
     camera(pos: [number, number, number], look: [number, number, number]) {
       app.renderer.snapCamera(pos, look);
       app.renderer.camera.position.set(...pos);

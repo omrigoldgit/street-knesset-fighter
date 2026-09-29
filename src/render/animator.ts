@@ -4,14 +4,15 @@
 // follow-through), and a two-bone IK keeps the feet planted while the body twists and steps.
 
 import * as THREE from 'three';
+import type { GestureId, Persona, StanceId } from '../data/personas';
 import { GETUP_FRAMES, TECHROLL_FRAMES } from '../game/constants';
 import type { Fighter } from '../game/fighter';
 import type { Match } from '../game/match';
 import type { AnimKey } from '../game/types';
-import { ANKLE_H, HIP_H, SHIN_LEN, THIGH_LEN, type Rig } from './characterModel';
+import { ANKLE_H, HIP_H, SHIN_LEN, THIGH_LEN, setHandShape, type HandShape, type Rig } from './characterModel';
 
 type V3 = [number, number, number];
-const JOINTS = ['hips', 'spine', 'chest', 'neck', 'head', 'lSh', 'lEl', 'rSh', 'rEl', 'lHip', 'lKnee', 'rHip', 'rKnee'] as const;
+const JOINTS = ['hips', 'spine', 'chest', 'neck', 'head', 'lSh', 'lEl', 'rSh', 'rEl', 'lHip', 'lKnee', 'rHip', 'rKnee', 'lWr', 'rWr'] as const;
 type Joint = (typeof JOINTS)[number];
 const N = JOINTS.length * 3 + 3;
 const HIPY = JOINTS.length * 3;
@@ -322,6 +323,227 @@ const FLURRY_ALT = mk(crossStrike, GUARD);
 /** Cinematic Rage Art / ultimate: a rapid Tekken-style string. */
 const ULT_SEQ: AnimKey[] = ['straight', 'highKick', 'jab', 'uppercut', 'power', 'midKick', 'bHook', 'launcher'];
 
+// ------------------------------------------------------------------ stances (per fighter)
+
+interface Stance {
+  pose: PoseArr;
+  /** Idle bounce amplitude and tempo multipliers. */
+  bounce: number;
+  tempo: number;
+  hands: [HandShape, HandShape];
+}
+
+const STANCES: Record<StanceId, Stance> = {
+  // Tight high guard, chin tucked, bouncing on the toes.
+  boxer: { pose: mk({ hipY: -0.1, hips: [0, -0.35, 0], spine: [0.22, -0.05, 0], chest: [0.08, 0, 0], head: [0.15, 0, 0], lSh: [-1.35, 0, 0.18], lEl: [-2.25, 0, 0], rSh: [-1.15, 0, -0.22], rEl: [-2.35, 0, 0] }, GUARD), bounce: 1.7, tempo: 1.45, hands: ['fist', 'fist'] },
+  // Deep bladed stance, lead knife-hand forward, rear fist chambered.
+  karate: { pose: mk({ hipY: -0.13, hips: [0, -0.6, 0], spine: [0.05, -0.08, 0], lSh: [-1.42, 0, 0.12], lEl: [-0.95, 0, 0], rSh: [-0.35, 0, -0.28], rEl: [-2.25, 0, 0] }, GUARD), bounce: 0.55, tempo: 0.8, hands: ['open', 'fist'] },
+  // Low and wide, arms out to clinch.
+  wrestler: { pose: mk({ hipY: -0.2, hips: [0, -0.15, 0], spine: [0.45, 0, 0], head: [-0.3, 0, 0], lSh: [-1.1, 0, 0.45], lEl: [-0.8, 0, 0], rSh: [-1.0, 0, -0.45], rEl: [-0.8, 0, 0] }, GUARD), bounce: 0.5, tempo: 0.7, hands: ['open', 'open'] },
+  // Upright, chest out, fists low and swinging.
+  brawler: { pose: mk({ hipY: -0.05, hips: [0, -0.25, 0], spine: [0, -0.05, 0], chest: [-0.05, 0, 0], lSh: [-0.95, 0, 0.35], lEl: [-1.7, 0, 0], rSh: [-0.7, 0, -0.35], rEl: [-1.9, 0, 0] }, GUARD), bounce: 0.85, tempo: 0.9, hands: ['fist', 'fist'] },
+  // Long stance with the lead arm reaching out to keep distance.
+  longguard: { pose: mk({ hipY: -0.08, hips: [0, -0.6, 0], spine: [0.08, -0.15, 0], lSh: [-1.5, 0, 0.12], lEl: [-0.5, 0, 0], rSh: [-1.0, 0, -0.3], rEl: [-2.2, 0, 0] }, GUARD), bounce: 0.7, tempo: 0.9, hands: ['open', 'fist'] },
+  mma: { pose: GUARD, bounce: 1.0, tempo: 1.0, hands: ['fist', 'fist'] },
+  // Dignified and upright: a head of state's guard.
+  statesman: { pose: mk({ hipY: -0.04, hips: [0, -0.3, 0], spine: [0.02, -0.05, 0], lSh: [-1.0, 0, 0.3], lEl: [-1.6, 0, 0], rSh: [-0.75, 0, -0.3], rEl: [-1.9, 0, 0] }, GUARD), bounce: 0.4, tempo: 0.8, hands: ['fist', 'fist'] },
+};
+
+// ------------------------------------------------------------------ gestures (intros, victories)
+
+interface Gesture {
+  keys: { t: number; spec: PoseSpec }[];
+  /** Loop the keyframes from this time once the last one is reached. */
+  loopFrom?: number;
+  hands: [HandShape, HandShape];
+  /** Procedural motion on top (waves, nods, pumps). */
+  wobble?: (t: number, out: PoseArr) => void;
+}
+
+/** Relaxed standing base for gestures. */
+const REST = mk({ lSh: [0.08, 0, 0.1], lEl: [-0.3, 0, 0], rSh: [0.08, 0, -0.1], rEl: [-0.3, 0, 0], lHip: [0, 0, 0.05], rHip: [0, 0, -0.05] }, STAND);
+const S = Math.sin;
+
+const GESTURES: Record<GestureId, Gesture> = {
+  point: {
+    keys: [{ t: 0, spec: {} }, { t: 0.35, spec: { spine: [0.1, 0.25, 0], rSh: [-1.62, 0, -0.1], rEl: [-0.2, 0, 0], lSh: [0.1, 0, 0.15], lEl: [-0.4, 0, 0], head: [0.05, 0, 0.1] } }],
+    hands: ['open', 'point'],
+    wobble: (t, o) => {
+      const k = Math.min(1, t / 0.4);
+      o[I.rEl] += S(t * 9) * 0.22 * k;
+      o[I.head] += S(t * 4.5) * 0.06 * k;
+    },
+  },
+  podium: {
+    keys: [{ t: 0, spec: { spine: [0.18, 0, 0], lSh: [-0.9, 0, 0.12], lEl: [-0.75, 0, 0], rSh: [-0.9, 0, -0.12], rEl: [-0.75, 0, 0] } }],
+    hands: ['open', 'open'],
+    wobble: (t, o) => {
+      o[I.head] += S(t * 3) * 0.1;
+      o[I.spine] += S(t * 1.5) * 0.05;
+      // Emphatic right-hand gesture every couple of seconds.
+      const beat = Math.max(0, S(t * 2.2)) ** 3;
+      o[I.rSh] -= beat * 0.5;
+      o[I.rEl] -= beat * 0.4;
+    },
+  },
+  wave: {
+    keys: [{ t: 0, spec: {} }, { t: 0.3, spec: { rSh: [-0.35, 0, -2.3], rEl: [-0.7, 0, 0], head: [-0.05, 0, 0.1] } }],
+    hands: ['fist', 'open'],
+    wobble: (t, o) => {
+      const k = Math.min(1, t / 0.3);
+      o[I.rEl + Z] += S(t * 8) * 0.45 * k;
+      o[I.rSh + Y] += S(t * 8) * 0.25 * k;
+    },
+  },
+  salute: {
+    keys: [{ t: 0, spec: { spine: [-0.05, 0, 0] } }, { t: 0.35, spec: { spine: [-0.05, 0, 0], head: [-0.05, 0, 0], rSh: [-1.55, 1.2, -1.25], rEl: [-1.4, 0, 0] } }],
+    hands: ['fist', 'open'],
+  },
+  armsCrossed: {
+    keys: [{ t: 0, spec: {} }, { t: 0.35, spec: { spine: [-0.08, 0, 0], head: [-0.15, 0, 0], lSh: [-0.75, 0, -0.3], lEl: [-1.95, 0, 0], rSh: [-0.7, 0, 0.3], rEl: [-1.95, 0, 0] } }],
+    hands: ['fist', 'fist'],
+    wobble: (t, o) => {
+      o[I.head + Z] += S(t * 1.3) * 0.05;
+    },
+  },
+  thumbsUp: {
+    keys: [{ t: 0, spec: {} }, { t: 0.3, spec: { rSh: [-0.75, 0.2, -0.05], rEl: [-1.4, 0, 0], head: [0, 0, 0.12] } }],
+    hands: ['fist', 'thumb'],
+    wobble: (t, o) => {
+      o[I.rSh] += S(t * 5) * 0.08;
+    },
+  },
+  fistPump: {
+    keys: [{ t: 0, spec: { rSh: [-2.5, 0, -0.3], rEl: [-1.3, 0, 0], head: [-0.25, 0, 0], spine: [-0.08, 0, 0] } }],
+    hands: ['fist', 'fist'],
+    wobble: (t, o) => {
+      o[I.rSh] += S(t * 7) * 0.3;
+      o[I.rEl] += S(t * 7) * 0.3;
+      o[HIPY] += Math.abs(S(t * 3.5)) * 0.02;
+    },
+  },
+  adjustTie: {
+    keys: [{ t: 0, spec: {} }, { t: 0.4, spec: { head: [0.15, 0, 0], lSh: [-1.25, 0, -0.35], lEl: [-2.35, 0, 0], rSh: [-1.25, 0, 0.35], rEl: [-2.35, 0, 0] } }],
+    hands: ['point', 'point'],
+    wobble: (t, o) => {
+      const k = Math.min(1, t / 0.4);
+      o[I.lEl] += S(t * 6) * 0.07 * k;
+      o[I.rEl] -= S(t * 6) * 0.07 * k;
+      o[I.head + Z] += S(t * 2) * 0.08 * k;
+    },
+  },
+  clap: {
+    keys: [{ t: 0, spec: { lSh: [-1.15, 0, -0.12], lEl: [-0.95, 0, 0], rSh: [-1.15, 0, 0.12], rEl: [-0.95, 0, 0] } }],
+    hands: ['open', 'open'],
+    wobble: (t, o) => {
+      const c = Math.abs(S(t * 9)) * 0.22;
+      o[I.lSh + Z] += c;
+      o[I.rSh + Z] -= c;
+    },
+  },
+  shrug: {
+    keys: [{ t: 0, spec: {} }, { t: 0.3, spec: { head: [0, 0, 0.22], lSh: [0.15, 0, 0.45], lEl: [-1.55, 0, 0], rSh: [0.15, 0, -0.45], rEl: [-1.55, 0, 0], lWr: [0, 0.8, 0], rWr: [0, -0.8, 0] } }],
+    hands: ['open', 'open'],
+    wobble: (t, o) => {
+      o[HIPY] += Math.max(0, S(t * 2.5)) * 0.02;
+    },
+  },
+  handsOnHips: {
+    keys: [{ t: 0, spec: {} }, { t: 0.35, spec: { spine: [-0.1, 0, 0], head: [-0.12, 0, 0], lSh: [0.2, 0, 0.6], lEl: [-1.75, 0, 0], rSh: [0.2, 0, -0.6], rEl: [-1.75, 0, 0], lHip: [0, 0, 0.12], rHip: [0, 0, -0.12] } }],
+    hands: ['fist', 'fist'],
+    wobble: (t, o) => {
+      o[I.spine + Z] += S(t * 1.2) * 0.04;
+    },
+  },
+  victoryV: {
+    keys: [{ t: 0, spec: {} }, { t: 0.3, spec: { head: [-0.3, 0, 0], spine: [-0.1, 0, 0], lSh: [-2.7, 0, 0.6], lEl: [-0.2, 0, 0], rSh: [-2.7, 0, -0.6], rEl: [-0.2, 0, 0] } }],
+    hands: ['v', 'v'],
+    wobble: (t, o) => {
+      o[HIPY] += Math.abs(S(t * 3)) * 0.02;
+    },
+  },
+  bothArmsUp: {
+    keys: [{ t: 0, spec: {} }, { t: 0.25, spec: { head: [-0.35, 0, 0], spine: [-0.12, 0, 0], lSh: [-2.9, 0, 0.35], lEl: [-0.35, 0, 0], rSh: [-2.9, 0, -0.35], rEl: [-0.35, 0, 0] } }],
+    hands: ['fist', 'fist'],
+    wobble: (t, o) => {
+      o[I.lSh] += S(t * 8) * 0.12;
+      o[I.rSh] += S(t * 8 + 1) * 0.12;
+    },
+  },
+  phone: {
+    keys: [{ t: 0, spec: {} }, { t: 0.35, spec: { head: [0.05, 0, -0.18], rSh: [-2.05, 0.6, -0.4], rEl: [-2.1, 0, 0], lSh: [0.1, 0, 0.1], lEl: [-1.2, 0, 0] } }],
+    hands: ['fist', 'open'],
+    wobble: (t, o) => {
+      o[I.head] += S(t * 2.6) * 0.07;
+    },
+  },
+  checkWatch: {
+    keys: [{ t: 0, spec: {} }, { t: 0.35, spec: { head: [0.4, 0.35, 0], lSh: [-0.5, -0.8, 0.1], lEl: [-1.5, 0, 0] } }],
+    hands: ['fist', 'fist'],
+    wobble: (t, o) => {
+      o[I.head + Z] += S(t * 1.5) * 0.05;
+    },
+  },
+  heart: {
+    keys: [{ t: 0, spec: {} }, { t: 0.4, spec: { spine: [0.12, 0, 0], head: [0.12, 0, 0.08], rSh: [-0.9, 1.2, 0.4], rEl: [-1.9, 0, 0] } }],
+    hands: ['fist', 'open'],
+  },
+  crowdWave: {
+    keys: [{ t: 0, spec: {} }, { t: 0.3, spec: { head: [-0.2, 0, 0], lSh: [-2.4, 0, 0.8], lEl: [-0.4, 0, 0], rSh: [-2.4, 0, -0.8], rEl: [-0.4, 0, 0] } }],
+    hands: ['open', 'open'],
+    wobble: (t, o) => {
+      o[I.lSh + Z] += S(t * 5) * 0.3;
+      o[I.rSh + Z] += S(t * 5 + Math.PI) * 0.3;
+    },
+  },
+  bow: {
+    keys: [
+      { t: 0, spec: {} },
+      { t: 0.6, spec: { spine: [0.55, 0, 0], head: [0.3, 0, 0], rSh: [-0.45, 0, 0.35], rEl: [-1.9, 0, 0] } },
+      { t: 1.4, spec: { spine: [0.55, 0, 0], head: [0.3, 0, 0], rSh: [-0.45, 0, 0.35], rEl: [-1.9, 0, 0] } },
+      { t: 2.1, spec: { rSh: [-0.45, 0, 0.35], rEl: [-1.9, 0, 0] } },
+      { t: 3.0, spec: {} },
+    ],
+    loopFrom: 0,
+    hands: ['fist', 'open'],
+  },
+};
+
+const gesturePoses = new Map<GestureId, PoseArr[]>();
+
+/** Samples a gesture at time t (seconds) into `out`; returns its hand shapes. */
+function gesturePose(id: GestureId, t: number, out: PoseArr): [HandShape, HandShape] {
+  const g = GESTURES[id];
+  let poses = gesturePoses.get(id);
+  if (!poses) {
+    poses = g.keys.map((k) => mk(k.spec, REST));
+    gesturePoses.set(id, poses);
+  }
+  const ks = g.keys;
+  const last = ks[ks.length - 1].t;
+  let tt = t;
+  if (g.loopFrom !== undefined && tt > last && last > g.loopFrom) tt = g.loopFrom + ((tt - g.loopFrom) % (last - g.loopFrom));
+  if (ks.length === 1 || tt >= last) out.set(poses[poses.length - 1]);
+  else {
+    let i = 0;
+    while (i < ks.length - 2 && tt >= ks[i + 1].t) i++;
+    lerpInto(out, poses[i], poses[i + 1], ease((tt - ks[i].t) / (ks[i + 1].t - ks[i].t)));
+  }
+  g.wobble?.(t, out);
+  return g.hands;
+}
+
+/** Hand shape for an attack animation. */
+function attackHands(anim: AnimKey): [HandShape, HandShape] {
+  switch (anim) {
+    case 'grab': case 'grabExec': case 'throw': case 'throwExec': case 'cast': case 'beam': case 'powerup':
+    case 'summon': case 'counterStance': case 'guardUp': case 'place': case 'vanish': case 'whip':
+      return ['open', 'open'];
+    default:
+      return ['fist', 'fist'];
+  }
+}
+
 /** Poses an attack; returns how extended it is (0 = base, 1 = full strike) for footwork. */
 function attackPose(out: PoseArr, anim: AttackAnim, f: number, s: number, a: number, r: number): number {
   if (f <= s) {
@@ -423,14 +645,37 @@ export class Animator {
   private prevState = '';
   private prevFrame = 0;
   private lastHurt = Number.NaN;
+  /** This fighter's body language. */
+  private persona: Persona | null = null;
+  private stance: Stance = STANCES.mma;
+  hands: [HandShape, HandShape] = ['fist', 'fist'];
+  private shownHands: [HandShape | null, HandShape | null] = [null, null];
+
+  setPersona(p: Persona): void {
+    this.persona = p;
+    this.stance = STANCES[p.stance];
+    this.cur.set(this.stance.pose);
+  }
 
   reset(): void {
-    this.cur.set(GUARD);
+    this.cur.set(this.stance.pose);
     this.vel.fill(0);
     this.spin = 0;
     this.roll = 0;
     this.gaitW = 0;
     this.ikL = this.ikR = 1;
+  }
+
+  /** Stance pose with its idle bounce. */
+  private idle(t: PoseArr, time: number, phase: number): void {
+    const st = this.stance;
+    const br = Math.sin(time * 3.4 * st.tempo + phase) * 0.5 + 0.5;
+    t.set(st.pose);
+    t[HIPY] -= br * 0.024 * st.bounce;
+    t[I.spine] += br * 0.04 * st.bounce;
+    t[I.lSh] += br * 0.05 * st.bounce;
+    t[I.rSh] -= br * 0.03 * st.bounce;
+    this.hands = st.hands;
   }
 
   /** Current body lean (used to roll camera-facing photo heads when lying down). */
@@ -486,20 +731,20 @@ export class Animator {
       v[HIPY] -= 0.5;
     }
 
+    this.hands = ['fist', 'fist'];
     switch (f.state) {
       case 'intro':
-        t.set(INTRO);
-        t[HIPY] += Math.sin(time * 2) * 0.01;
-        spring = [200, 0.9];
+        // Signature entrance: the MK's own gesture.
+        if (this.persona) this.hands = gesturePose(this.persona.intro, f.stateFrame / 60, t);
+        else t.set(INTRO);
+        spring = [260, 0.85];
         break;
       case 'idle': case 'jumpSquat': case 'land': {
-        // Tekken stance bounce.
-        const br = Math.sin(time * 3.4 + f.index * 1.3) * 0.5 + 0.5;
-        t.set(f.guarding ? BLOCK : GUARD);
-        t[HIPY] -= br * 0.024;
-        t[I.spine] += br * 0.04;
-        t[I.lSh] += br * 0.05;
-        t[I.rSh] -= br * 0.03;
+        this.idle(t, time, f.index * 1.3);
+        if (f.guarding) {
+          t.set(BLOCK);
+          this.hands = ['fist', 'fist'];
+        }
         if (f.state !== 'idle') {
           lerpInto(t, t, CROUCH, 0.4);
           spring = [700, 0.8];
@@ -507,7 +752,11 @@ export class Animator {
         break;
       }
       case 'walkF': case 'walkB':
-        t.set(f.guarding ? BLOCK : GUARD);
+        if (f.guarding) t.set(BLOCK);
+        else {
+          t.set(this.stance.pose);
+          this.hands = this.stance.hands;
+        }
         stride = 0.26;
         lift = 0.07;
         t[HIPY] -= 0.018 * (0.5 - 0.5 * Math.cos(this.gaitPhase * TAU * 2));
@@ -518,7 +767,8 @@ export class Animator {
         spring = [520, 0.8];
         break;
       case 'dash':
-        t.set(GUARD);
+        t.set(this.stance.pose);
+        this.hands = this.stance.hands;
         t[I.spine] += 0.28;
         t[HIPY] -= 0.05;
         stride = 0.42;
@@ -538,7 +788,8 @@ export class Animator {
         break;
       }
       case 'backdash':
-        t.set(GUARD);
+        t.set(this.stance.pose);
+        this.hands = this.stance.hands;
         t[I.spine] -= 0.12;
         t[HIPY] -= 0.04;
         stride = 0.4;
@@ -546,7 +797,8 @@ export class Animator {
         spring = [520, 0.8];
         break;
       case 'sidestep': case 'sidewalk': {
-        lerpInto(t, GUARD, CROUCH, 0.18);
+        lerpInto(t, this.stance.pose, CROUCH, 0.18);
+        this.hands = this.stance.hands;
         // Lean into the step (model +X is the fighter's left).
         const lat = f.sideX * Math.sin(f.yaw) - f.sideZ * Math.cos(f.yaw);
         t[I.spine + Z] -= lat * 0.22;
@@ -599,6 +851,7 @@ export class Animator {
         if (anim.fk === 'r' || anim.fk === 'both') ikR = 0;
         stepL = (anim.step ?? 0) * w;
         stepR = (anim.rear ?? 0) * w;
+        this.hands = attackHands(mv.anim);
         // Step-in moves travel: keep the feet stepping instead of sliding.
         stride = 0.34;
         lift = 0.05;
@@ -606,7 +859,8 @@ export class Animator {
       }
       case 'hitstun': {
         const react = f.hitHigh ? HIT_HIGH : f.isCrouching ? HIT_LOW : HIT_BODY;
-        lerpInto(t, react, GUARD, ease(1 - f.stun / 8));
+        lerpInto(t, react, this.stance.pose, ease(1 - f.stun / 8));
+        this.hands = ['open', 'open'];
         spring = [700, 0.5];
         break;
       }
@@ -641,7 +895,7 @@ export class Animator {
       case 'getup': {
         const p = clamp01(f.stateFrame / GETUP_FRAMES);
         if (p < 0.5) lerpInto(t, LYING, CROUCH, ease(p * 2));
-        else lerpInto(t, CROUCH, GUARD, ease((p - 0.5) * 2));
+        else lerpInto(t, CROUCH, this.stance.pose, ease((p - 0.5) * 2));
         ikL = ikR = clamp01((p - 0.45) * 2);
         upright = p > 0.4;
         spring = [900, 0.85];
@@ -679,13 +933,15 @@ export class Animator {
         }
         break;
       case 'victory': {
-        const vp = VICTORY[f.victoryVariant % VICTORY.length];
-        t.set(vp);
-        if (f.victoryVariant % 3 === 1) t[I.rSh] += Math.sin(time * 9) * 0.25;
-        if (f.victoryVariant % 3 === 2) t[I.head] += Math.sin(time * 4) * 0.12;
-        t[HIPY] += Math.abs(Math.sin(time * 3)) * 0.02;
-        ikL = ikR = 0;
-        spring = [150, 0.9];
+        const wins = this.persona?.win;
+        if (wins?.length) {
+          this.hands = gesturePose(wins[f.victoryVariant % wins.length], f.stateFrame / 60, t);
+        } else {
+          const vp = VICTORY[f.victoryVariant % VICTORY.length];
+          t.set(vp);
+          t[HIPY] += Math.abs(Math.sin(time * 3)) * 0.02;
+        }
+        spring = [260, 0.85];
         break;
       }
       case 'cinematic': {
@@ -709,8 +965,11 @@ export class Animator {
       }
     }
 
+    // Limp, open hands when knocked about.
+    if (!upright || f.state === 'dizzy') this.hands = ['open', 'open'];
+
     // Keep the gaze on the opponent whatever the torso is doing.
-    if (upright) t[I.head + Y] = -(t[I.hips + Y] + t[I.spine + Y] + t[I.chest + Y]) * 0.9;
+    if (upright) t[I.head + Y] += -(t[I.hips + Y] + t[I.spine + Y] + t[I.chest + Y]) * 0.9;
 
     // Spin: accumulated whole-body turn for spinning moves (not sprung).
     this.spin = spinTarget !== 0 ? spinTarget : this.spin * 0.8;
@@ -788,25 +1047,28 @@ export class Animator {
     }
   }
 
-  /** Menu showcase animation (no engine fighter needed). */
-  showcase(dt: number, time: number, kind: 'guard' | 'victory' | 'intro', variant = 0, phase = 0): void {
+  /**
+   * Menu showcase animation (no engine fighter needed). Intro and victory play the fighter's own
+   * gestures; `gesture` forces a specific one. `since` is the time the pose started (seconds).
+   */
+  showcase(dt: number, time: number, kind: 'guard' | 'victory' | 'intro', variant = 0, phase = 0, gesture?: GestureId, since = 0): void {
     const t = this.target;
-    if (kind === 'victory') {
+    const p = this.persona;
+    const g: GestureId | undefined = gesture ?? (kind === 'intro' ? p?.intro : kind === 'victory' ? p?.win[variant % p.win.length] : undefined);
+    this.ikL = this.ikR = 1;
+    if (g) {
+      this.hands = gesturePose(g, Math.max(0, time - since), t);
+    } else if (kind === 'victory') {
       t.set(VICTORY[variant % VICTORY.length]);
-      if (variant % 3 === 1) t[I.rSh] += Math.sin(time * 9 + phase) * 0.25;
       t[HIPY] += Math.abs(Math.sin(time * 3 + phase)) * 0.02;
-      this.ikL = this.ikR = 0;
+      this.hands = ['fist', 'fist'];
     } else if (kind === 'intro') {
       t.set(INTRO);
-      this.ikL = this.ikR = 1;
+      this.hands = ['fist', 'fist'];
     } else {
-      const br = Math.sin(time * 3.4 + phase) * 0.5 + 0.5;
-      t.set(GUARD);
-      t[HIPY] -= br * 0.024;
-      t[I.spine] += br * 0.04;
-      this.ikL = this.ikR = 1;
+      this.idle(t, time, phase);
     }
-    t[I.head + Y] = -(t[I.hips + Y] + t[I.spine + Y] + t[I.chest + Y]) * 0.9;
+    t[I.head + Y] += -(t[I.hips + Y] + t[I.spine + Y] + t[I.chest + Y]) * 0.9;
     this.hidden = false;
     this.spin *= 0.8;
     this.roll = 0;
@@ -817,11 +1079,17 @@ export class Animator {
 
   apply(rig: Rig): void {
     const c = this.cur;
-    const js = [rig.hips, rig.spine, rig.chest, rig.neck, rig.head, rig.lSh, rig.lEl, rig.rSh, rig.rEl, rig.lHip, rig.lKnee, rig.rHip, rig.rKnee];
+    const js = [rig.hips, rig.spine, rig.chest, rig.neck, rig.head, rig.lSh, rig.lEl, rig.rSh, rig.rEl, rig.lHip, rig.lKnee, rig.rHip, rig.rKnee, rig.lHand, rig.rHand];
     for (let i = 0; i < js.length; i++) js[i].rotation.set(c[i * 3], c[i * 3 + 1], c[i * 3 + 2]);
     rig.hips.rotation.y += this.spin;
     rig.pivot.position.y = HIP_H + c[HIPY];
     rig.pivot.rotation.set(c[PIVX], this.roll, c[PIVZ]);
+    for (let k = 0; k < 2; k++) {
+      if (this.shownHands[k] !== this.hands[k]) {
+        this.shownHands[k] = this.hands[k];
+        setHandShape(rig, k === 0 ? 'l' : 'r', this.hands[k]);
+      }
+    }
 
     if (this.ikL <= 0.001 && this.ikR <= 0.001) {
       rig.lFoot.quaternion.identity();

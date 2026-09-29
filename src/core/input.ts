@@ -7,7 +7,7 @@ export type Action = 'LP' | 'HP' | 'LK' | 'HK' | 'SP' | 'UL' | 'SS' | 'TH' | 'ST
 export const ACTIONS: Action[] = ['LP', 'HP', 'LK', 'HK', 'SP', 'UL', 'TH', 'SS', 'START', 'SELECT'];
 export const ACTION_NAMES: Record<Action, string> = {
   LP: 'Light Punch', HP: 'Heavy Punch', LK: 'Light Kick', HK: 'Heavy Kick',
-  SP: 'Special', UL: 'Ultimate', SS: 'Sidestep', TH: 'Throw', START: 'Pause', SELECT: 'Reset (training)',
+  SP: 'Special', UL: 'Heat Smash', SS: 'Sidestep', TH: 'Throw', START: 'Pause', SELECT: 'Reset (training)',
 };
 
 export type PadBinding = Record<Action, number>;

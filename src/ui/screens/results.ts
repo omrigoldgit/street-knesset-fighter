@@ -148,7 +148,7 @@ export class EndingScreen implements Screen {
       <p>Against all odds, <b>${esc(p.name)}</b> has survived the plenum, outlasted ${ar.ladder.length} rivals and assembled a 61-seat majority${ar.continues ? ` (after ${ar.continues} emergency election${ar.continues > 1 ? 's' : ''})` : ''}.<br>
       The President has asked ${esc(p.name.split(' ')[0])} to form the next government. It will last at least… until the next arcade run.</p>
       <div class="defeated">${ar.ladder.map((c) => portraitHTML(c)).join('')}</div>
-      <p style="color:var(--muted);font-size:14px">Street Knesset Fighter · a parody. Thanks for playing!</p>
+      <p style="color:var(--muted);font-size:14px">Iron Knesset · a parody. Thanks for playing!</p>
       <div>${app.mg('confirm')} Main Menu</div>`;
     app.ui.appendChild(wrap);
   }

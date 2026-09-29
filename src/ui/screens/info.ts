@@ -1,16 +1,13 @@
-import { ACTIONS, ACTION_NAMES, KEYBOARD_P1, KEYBOARD_P2, keyLabel, type Action, type GlyphStyle } from '../../core/input';
+import { ACTIONS, ACTION_NAMES, KEYBOARD_P1, KEYBOARD_P2, keyLabel, type Action } from '../../core/input';
 import { ROSTER } from '../../data/roster';
 import type { CharacterDef } from '../../game/characterTypes';
 import { NORMAL_LIST, STYLE_INFO } from '../../game/normals';
 import { specialDesc, ultimateDesc } from '../../game/specials';
 import type { App, Screen } from '../app';
-import { MenuList, MOTION, el, esc, partyChip, portraitHTML, readable } from '../dom';
+import { MenuList, el, esc, partyChip, portraitHTML, readable } from '../dom';
 
-const SLOT_INPUT = [
-  { motion: MOTION.qcf, btn: 'P', dir: '' },
-  { motion: MOTION.qcb, btn: 'K', dir: '→ +' },
-  { motion: MOTION.dp, btn: 'P', dir: '↓ +' },
-];
+/** Specials sit on their own button, Tekken style: neutral, forward or down + Special. */
+const SLOT_DIR = ['', '<span class="arrow">→</span> + ', '<span class="arrow">↓</span> + '];
 
 const DIR_ARROWS: Record<string, string> = { 'd/f': '↘', 'd/b': '↙', 'u/f': '↗', 'u/b': '↖', f: '→', b: '←', d: '↓', u: '↑' };
 const BUTTONS: Record<string, Action> = { 1: 'LP', 2: 'HP', 3: 'LK', 4: 'HK' };
@@ -23,26 +20,19 @@ export function notation(input: string, g: (a: Action) => string): string {
     .join('');
 }
 
-function pk(app: App, which: 'P' | 'K', slot: 0 | 1, style: GlyphStyle): string {
-  return which === 'P'
-    ? `${app.glyph('LP', slot, style)}/${app.glyph('HP', slot, style)}`
-    : `${app.glyph('LK', slot, style)}/${app.glyph('HK', slot, style)}`;
-}
-
 export function moveListHTML(app: App, def: CharacterDef, slot: 0 | 1 = 0): string {
   const style = app.glyphStyle(slot) === 'kb' && app.menuStyle() !== 'kb' ? app.menuStyle() : app.glyphStyle(slot);
   const g = (a: Action) => app.glyph(a, slot, style);
   const rows: string[] = [];
   rows.push('<tr class="hdr"><td colspan="3">SPECIAL MOVES</td></tr>');
   def.specials.forEach((s, i) => {
-    const si = SLOT_INPUT[i];
     rows.push(`<tr><td class="mv" style="color:${readable(s.color)}">${esc(s.name)}</td>
-      <td class="in"><span class="arrow">${si.motion}</span> + ${pk(app, si.btn as 'P' | 'K', slot, style)}<br><span style="color:var(--muted)">or</span> ${si.dir} ${g('SP')}</td>
+      <td class="in">${SLOT_DIR[i]}${g('SP')}</td>
       <td class="ds">${esc(specialDesc(s))}${s.type === 'dive' ? ' Works in the air.' : ''}</td></tr>`);
   });
-  rows.push('<tr class="hdr"><td colspan="3">ULTIMATE (FULL METER)</td></tr>');
+  rows.push('<tr class="hdr"><td colspan="3">HEAT SMASH (FULL HEAT GAUGE)</td></tr>');
   rows.push(`<tr><td class="mv" style="color:var(--gold)">${esc(def.ultimate.name)}</td>
-    <td class="in"><span class="arrow">${MOTION.dqcf}</span> + ${pk(app, 'P', slot, style)}<br><span style="color:var(--muted)">or</span> ${g('UL')}</td>
+    <td class="in">${g('UL')}</td>
     <td class="ds">${esc(ultimateDesc(def.ultimate))}</td></tr>`);
   rows.push('<tr class="hdr"><td colspan="3">PASSIVE ABILITY</td></tr>');
   rows.push(`<tr><td class="mv">${esc(def.passive.name)}</td><td class="in">Always on</td><td class="ds">${esc(def.passive.desc)}</td></tr>`);
@@ -57,8 +47,8 @@ export function moveListHTML(app: App, def: CharacterDef, slot: 0 | 1 = 0): stri
     ['Launch & juggle', `↘ ${g('HP')} · ↗ ${g('HK')} · WS ${g('HP')}`, 'Launchers pop the opponent into the air: follow up with strings before they land. Screw moves extend the juggle.'],
     ['Walls', '—', 'Heavy hits near the arena edge cause a wall splat: free follow-up.'],
     ['Tech roll · Get up', `Any attack as you land · any input`, 'Roll away when you hit the floor, or get up when you choose.'],
-    ['Rage', `Below 25% health: ${g('UL')}`, 'Red aura. Fire your Ultimate as a Rage Art without meter, once per round.'],
-    ['Cancels', `Normal → Special → ${g('UL')}`, 'Normals that connect cancel into specials; specials that hit cancel into the Ultimate.'],
+    ['Rage', `Below 25% health: ${g('UL')}`, 'Red aura. Fire your Heat Smash as a Rage Art with an empty gauge, once per round.'],
+    ['Cancels', `Normal → Special → ${g('UL')}`, 'Normals that connect cancel into specials; specials that hit cancel into the Heat Smash.'],
   ];
   for (const [n, i, d] of uni) rows.push(`<tr><td class="mv">${n}</td><td class="in">${i}</td><td class="ds">${d}</td></tr>`);
   rows.push(`<tr class="hdr"><td colspan="3">COMMAND LIST · ${g('LP')}=1 ${g('HP')}=2 ${g('LK')}=3 ${g('HK')}=4</td></tr>`);
