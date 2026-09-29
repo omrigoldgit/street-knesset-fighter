@@ -228,6 +228,7 @@ export type GameEvent =
   | { t: 'wallsplat'; fighter: number }
   | { t: 'techroll'; fighter: number }
   | { t: 'rage'; fighter: number }
+  | { t: 'mimic'; fighter: number; from: number }
   | { t: 'lifeline'; fighter: number; name: string }
   | { t: 'rumble'; fighter: number; strong: number; weak: number; ms: number }
   | { t: 'shake'; amount: number }

@@ -5,6 +5,7 @@ import { NORMAL_LIST, STYLE_INFO } from '../../game/normals';
 import { specialDesc, ultimateDesc } from '../../game/specials';
 import type { App, Screen } from '../app';
 import { MenuList, el, esc, partyChip, portraitHTML, readable } from '../dom';
+import { styleLine } from './select';
 
 /** Specials sit on their own button, Tekken style: neutral, forward or down + Special. */
 const SLOT_DIR = ['', '<span class="arrow">→</span> + ', '<span class="arrow">↓</span> + '];
@@ -60,6 +61,7 @@ export function moveListHTML(app: App, def: CharacterDef, slot: 0 | 1 = 0): stri
   return `<div class="ml-head">${portraitHTML(def)}<div><div class="display" style="font-size:40px;line-height:1">${esc(def.name)}</div>
     <div style="font-size:20px"><span class="he">${esc(def.nameHe)}</span></div>${partyChip(def)}
     <div style="color:var(--muted);margin-top:4px">${esc(def.role)} · ${esc(STYLE_INFO[def.style])}</div>
+    ${styleLine(def)}
     <div style="margin-top:6px;max-width:720px">${esc(def.bio)}</div></div></div>
     <table class="ml-table">${rows.join('')}</table>`;
 }

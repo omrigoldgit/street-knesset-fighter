@@ -7,7 +7,7 @@
 
 import * as THREE from 'three';
 
-export type JacketStyle = 'suit' | 'open' | 'blazer' | 'shirt' | 'tshirt';
+export type JacketStyle = 'suit' | 'open' | 'blazer' | 'shirt' | 'tshirt' | 'dress';
 
 export interface JacketSpec {
   color: number;
@@ -17,6 +17,8 @@ export interface JacketSpec {
   pin: number;
   female: boolean;
   pinstripe: boolean;
+  /** Fluorescent safety vest over the jacket. */
+  hivis?: boolean;
   /** Torso height range covered by the texture, to place details at real heights. */
   y0: number;
   y1: number;
@@ -132,8 +134,8 @@ export function jacketTextures(spec: JacketSpec, seed: number): GarmentTex {
   hg.fillRect(0, 0, W, Hh);
   const X = (u: number) => u * W;
   const V = (y: number) => (1 - (y - spec.y0) / (spec.y1 - spec.y0)) * Hh;
-  const base = spec.style === 'shirt' || spec.style === 'tshirt' ? spec.shirt : spec.color;
-  fabric(g, W, Hh, base, seed, spec.style === 'tshirt' ? 0.04 : 0.06);
+  const base = spec.hivis ? HIVIS : spec.style === 'shirt' || spec.style === 'tshirt' ? spec.shirt : spec.color;
+  fabric(g, W, Hh, base, seed, spec.style === 'tshirt' || spec.style === 'dress' ? 0.04 : 0.06);
 
   if (spec.pinstripe && spec.style !== 'shirt' && spec.style !== 'tshirt') {
     g.strokeStyle = css(0xffffff, 0.09);
@@ -167,7 +169,19 @@ export function jacketTextures(spec: JacketSpec, seed: number): GarmentTex {
   const neckY = V(spec.y1 - 0.005);
   const style = spec.style;
 
-  if (style === 'tshirt') {
+  if (style === 'dress') {
+    // Scoop neckline and a waist seam.
+    g.fillStyle = 'rgba(214,170,140,0.95)';
+    g.beginPath();
+    g.ellipse(cx, 0, X(0.07), Hh * 0.06, 0, 0, Math.PI);
+    g.fill();
+    g.strokeStyle = 'rgba(0,0,0,0.12)';
+    g.lineWidth = 2;
+    g.beginPath();
+    g.moveTo(0, V(1.02));
+    g.lineTo(W, V(1.02));
+    g.stroke();
+  } else if (style === 'tshirt') {
     // Crew neck rib.
     g.fillStyle = css(new THREE.Color(spec.shirt).multiplyScalar(0.85).getHex());
     g.fillRect(0, 0, W, Hh * 0.035);
@@ -183,6 +197,8 @@ export function jacketTextures(spec: JacketSpec, seed: number): GarmentTex {
       g.arc(cx, y, 3.2, 0, Math.PI * 2);
       g.fill();
     }
+  } else if (spec.hivis) {
+    hiVisVest(g, hg, W, Hh, cx, spec);
   } else {
     // Jacket front: V opening showing shirt (and tie), lapels, buttons, pockets.
     const open = style === 'open';
@@ -367,6 +383,133 @@ export function jacketTextures(spec: JacketSpec, seed: number): GarmentTex {
   }
   weave(hg, W, Hh, seed + 7, style === 'tshirt' ? 6 : 12);
   return { map: tex(c, true), normalMap: tex(heightToNormal(hc, 2.2), false) };
+}
+
+const HIVIS = 0xd4f21c;
+
+/** Safety vest: V neck showing shirt and tie, reflective bands, a zip. */
+function hiVisVest(g: CanvasRenderingContext2D, hg: CanvasRenderingContext2D, W: number, Hh: number, cx: number, spec: JacketSpec): void {
+  const vb = Hh * 0.42;
+  const topHalf = W * 0.07;
+  g.fillStyle = css(spec.shirt);
+  g.beginPath();
+  g.moveTo(cx - topHalf, 0);
+  g.lineTo(cx + topHalf, 0);
+  g.lineTo(cx, vb);
+  g.closePath();
+  g.fill();
+  if (spec.tie !== null) {
+    g.fillStyle = css(spec.tie);
+    g.beginPath();
+    g.moveTo(cx - W * 0.016, Hh * 0.02);
+    g.lineTo(cx + W * 0.016, Hh * 0.02);
+    g.lineTo(cx + W * 0.024, vb - 16);
+    g.lineTo(cx, vb - 4);
+    g.lineTo(cx - W * 0.024, vb - 16);
+    g.closePath();
+    g.fill();
+  }
+  // Zip and edge binding.
+  g.strokeStyle = 'rgba(60,70,20,0.6)';
+  g.lineWidth = 3;
+  g.beginPath();
+  g.moveTo(cx, vb);
+  g.lineTo(cx, Hh);
+  g.stroke();
+  for (const sgn of [-1, 1]) {
+    g.beginPath();
+    g.moveTo(cx + sgn * topHalf, 0);
+    g.lineTo(cx, vb);
+    g.stroke();
+  }
+  // Retro-reflective bands: two around the body, two braces over the shoulders.
+  const band = (x: number, y: number, w: number, h: number) => {
+    const gr = g.createLinearGradient(0, y, 0, y + h);
+    gr.addColorStop(0, '#c9ccd1');
+    gr.addColorStop(0.5, '#f4f6f8');
+    gr.addColorStop(1, '#a9adb3');
+    g.fillStyle = gr;
+    g.fillRect(x, y, w, h);
+    hg.fillStyle = 'rgb(170,170,170)';
+    hg.fillRect(x, y, w, h);
+  };
+  const bh = Hh * 0.045;
+  for (const y of [Hh * 0.62, Hh * 0.8]) {
+    band(0, y, cx - W * 0.012, bh);
+    band(cx + W * 0.012, y, W - cx - W * 0.012, bh);
+  }
+  for (const u of [0.1, 0.4, 0.6, 0.9]) band(W * u - W * 0.018, 0, W * 0.036, Hh * 0.62);
+}
+
+/** Old City skyline print (walls, towers, cypresses, the golden dome) in sepia and gold. */
+function skyline(g: CanvasRenderingContext2D, W: number, Hh: number, top: number, bottom: number, seed: number): void {
+  const r = rng(seed + 99);
+  const ink = 'rgba(122,92,48,0.85)';
+  const light = 'rgba(214,180,120,0.8)';
+  const h = bottom - top;
+  const ground = bottom - h * 0.12;
+  // Wall with crenellations right around the hem.
+  g.fillStyle = light;
+  g.fillRect(0, ground - h * 0.28, W, h * 0.28);
+  g.fillStyle = ink;
+  for (let x = 0; x < W; x += 10) g.fillRect(x, ground - h * 0.33, 6, h * 0.06);
+  g.fillRect(0, ground - h * 0.28, W, 2);
+  for (let x = 6; x < W; x += 22) g.fillRect(x, ground - h * 0.2, 3, 6);
+  // Towers and houses.
+  for (let i = 0; i < 18; i++) {
+    const x = r() * W;
+    const w = 10 + r() * 22;
+    const th = h * (0.35 + r() * 0.35);
+    g.fillStyle = r() < 0.5 ? ink : light;
+    g.fillRect(x, ground - th, w, th);
+    if (r() < 0.5) {
+      g.beginPath();
+      g.moveTo(x - 2, ground - th);
+      g.lineTo(x + w / 2, ground - th - w * 0.8);
+      g.lineTo(x + w + 2, ground - th);
+      g.closePath();
+      g.fill();
+    }
+  }
+  // Cypresses.
+  g.fillStyle = 'rgba(70,80,40,0.8)';
+  for (let i = 0; i < 10; i++) {
+    const x = r() * W;
+    g.beginPath();
+    g.ellipse(x, ground - h * 0.3, 5, h * 0.22, 0, 0, Math.PI * 2);
+    g.fill();
+  }
+  // The golden dome, front and centre, with the grey dome to one side.
+  const dome = (x: number, rad: number, fill: string) => {
+    g.fillStyle = ink;
+    g.fillRect(x - rad * 1.2, ground - h * 0.52, rad * 2.4, h * 0.26);
+    g.fillStyle = fill;
+    g.beginPath();
+    g.arc(x, ground - h * 0.52, rad, Math.PI, 0);
+    g.fill();
+  };
+  dome(W * 0.5, h * 0.22, '#e8b923');
+  dome(W * 0.62, h * 0.12, '#8a8f99');
+  dome(W * 0.02, h * 0.14, '#8a8f99');
+}
+
+/** Dress skirt: plain fabric, or the skyline print around the lower half. */
+export function skirtTextures(color: number, print: 'jerusalem' | undefined, seed: number): GarmentTex {
+  const W = 512;
+  const H = 256;
+  const [c, g] = canvas(W, H);
+  const [hc, hg] = canvas(W, H);
+  fabric(g, W, H, color, seed, 0.04);
+  hg.fillStyle = 'rgb(128,128,128)';
+  hg.fillRect(0, 0, W, H);
+  if (print === 'jerusalem') skyline(g, W, H, H * 0.35, H, seed);
+  const ao = g.createLinearGradient(0, 0, 0, H * 0.1);
+  ao.addColorStop(0, 'rgba(0,0,0,0.18)');
+  ao.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = ao;
+  g.fillRect(0, 0, W, H);
+  weave(hg, W, H, seed + 5, 6);
+  return { map: tex(c, true), normalMap: tex(heightToNormal(hc, 1.6), false) };
 }
 
 /** Trousers (or a pencil skirt): creases down the front of each leg, side seams, belt at the top. */

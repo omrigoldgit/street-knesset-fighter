@@ -12,8 +12,8 @@ export type HairStyle =
 
 export type FacialHair = 'none' | 'stubble' | 'short' | 'long' | 'goatee' | 'mustache' | 'full';
 export type Glasses = 'none' | 'round' | 'rect' | 'thick';
-export type Headwear = 'none' | 'kippah' | 'kippah-knit' | 'black-hat' | 'hat' | 'beret' | 'scarf';
-export type Outfit = 'suit' | 'open-suit' | 'blazer' | 'skirt' | 'shirt' | 'tshirt';
+export type Headwear = 'none' | 'kippah' | 'kippah-knit' | 'black-hat' | 'hat' | 'beret' | 'scarf' | 'hardhat';
+export type Outfit = 'suit' | 'open-suit' | 'blazer' | 'skirt' | 'shirt' | 'tshirt' | 'dress';
 
 export interface Look {
   skin: number;
@@ -85,7 +85,8 @@ export type PassiveId =
   | 'projectileProof' // take half damage from projectiles
   | 'drainer'       // hits drain opponent meter
   | 'quickRecovery' // faster getup and invulnerable backdash
-  | 'powerSurge';   // specials deal more damage
+  | 'powerSurge'    // specials deal more damage
+  | 'mimic';        // copies the opponent's specials and Heat Smash every round
 
 export interface PassiveSpec {
   id: PassiveId;

@@ -62,6 +62,20 @@ export class PostFX {
     this.gtao.blendIntensity = 0.85;
     this.gtao.updateGtaoMaterial({ radius: 0.35, distanceExponent: 1.4, thickness: 1.2, scale: 1.1, samples: 12 });
     this.gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 });
+    // Glowing effects (sparks, strike trails, auras) are see-through: keep them out of the AO
+    // pre-pass, which would otherwise treat them as solid and darken them.
+    const ao = this.gtao as unknown as { _overrideVisibility(): void; _visibilityCache: THREE.Object3D[] };
+    const hideLines = ao._overrideVisibility.bind(ao);
+    ao._overrideVisibility = () => {
+      hideLines();
+      scene.traverse((o) => {
+        const mat = (o as THREE.Mesh).material as THREE.Material | undefined;
+        if (o.visible && (o as THREE.Mesh).isMesh && mat && !Array.isArray(mat) && mat.transparent && !mat.depthWrite) {
+          o.visible = false;
+          ao._visibilityCache.push(o);
+        }
+      });
+    };
     this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.42, 0.38, 0.86);
     this.grade = new ShaderPass(GradeShader);
     this.composer.addPass(this.renderPass);

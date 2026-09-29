@@ -148,6 +148,9 @@ html, body {
 .cs-info .name { font-size: clamp(22px, 2.4vw, 34px); line-height: 1; margin: 2px 0; }
 .cs-info .he { font-size: 18px; color: #dfe7ff; }
 .cs-info .role { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.fstyle { font-size: 13px; color: var(--sky); margin-top: 3px; }
+.fstyle b { color: #fff; font-weight: 600; }
+.trait { font-size: 12.5px; color: var(--gold); margin-top: 2px; font-style: italic; }
 .chip { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: bold; margin-top: 6px; }
 .cs-info .passive { font-size: 13px; margin-top: 8px; color: #dfe7ff; }
 .cs-info .passive b { color: var(--gold); }

@@ -4,7 +4,7 @@ import type { CharacterDef } from './characterTypes';
 import {
   ARENA_RADIUS, JUGGLE_VY_SCALE, LAUNCHER, MAX_METER, PUSH_RADIUS, THROW_TECH_WINDOW, WALLSPLAT_FRAMES, comboScale,
 } from './constants';
-import { Fighter, GRAB_EXEC, THROW_EXEC } from './fighter';
+import { Fighter, GRAB_EXEC, THROW_EXEC, getMoveSet } from './fighter';
 import { Projectile, type ProjectileOpts } from './projectile';
 import { BTN, NO_INPUT, type Box, type Cyl, type GameEvent, type HitDef, type MoveDef, type PlayerInput, type PropStyle, type SparkKind } from './types';
 import { leftOf, type V2 } from './vec';
@@ -248,6 +248,16 @@ export class Match {
     this.perfect = false;
     this.placeFighters();
     for (const f of this.fighters) f.koed = false;
+    // Party Switcher (Mokujin style): take the opponent's specials and Heat Smash for this round.
+    for (const f of this.fighters) {
+      if (f.passive !== 'mimic') continue;
+      const opp = this.fighters[1 - f.index];
+      const own = getMoveSet(f.def);
+      const theirs = getMoveSet(opp.def);
+      f.moves = { ...own, specials: theirs.specials, ultimate: theirs.ultimate };
+      this.emit({ t: 'mimic', fighter: f.index, from: opp.index });
+      this.emit({ t: 'special', fighter: f.index, name: `Party Switch: ${opp.def.nick ?? opp.def.name.split(' ').slice(-1)[0]}'s moves`, color: 0xc8a165 });
+    }
   }
 
   /** Training mode: put both fighters back at the start. */

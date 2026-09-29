@@ -4,7 +4,9 @@
 // Head space: origin at the skull centre, +X is the character's left, +Z is forward.
 
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import type { Look } from '../game/characterTypes';
+import type { GearId } from '../data/signatures';
 import type { PhotoHead } from './faces';
 import { FACE_OVAL, faceTriangles } from './faceTopology';
 import { hairTextures } from './garments';
@@ -178,7 +180,7 @@ function edgeAlpha(tris: Uint16Array, count: number): Float32Array {
   return alpha;
 }
 
-export function buildPhotoHead(c: THREE.Group, photo: PhotoHead, look: Look, skin: THREE.MeshStandardMaterial, track: Track, disposables: Disposables, seed: number): void {
+export function buildPhotoHead(c: THREE.Group, photo: PhotoHead, look: Look, skin: THREE.MeshStandardMaterial, track: Track, disposables: Disposables, seed: number, gear: Set<GearId> = new Set()): void {
   const P = photo.mesh.pos;
   const UV = photo.mesh.uv;
   const at = (i: number) => new THREE.Vector3(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]);
@@ -312,6 +314,22 @@ export function buildPhotoHead(c: THREE.Group, photo: PhotoHead, look: Look, ski
   buildHair(fit, look, rx * 0.985, track, disposables, seed, line);
   buildHeadwear(fit, look, rx, stdFactory(track));
 
+  // Worn gear: sunglasses over the photographed eyes, an earpiece, earrings.
+  const hv = (i: number) => new THREE.Vector3((P[i * 3] - ref.x) * s, (P[i * 3 + 1] - ref.y) * s + ty, (P[i * 3 + 2] - ref.z) * s * 1.05);
+  const eyeL = hv(263).add(hv(362)).multiplyScalar(0.5);
+  const eyeR = hv(33).add(hv(133)).multiplyScalar(0.5);
+  const bridge = hv(168);
+  const lensZ = Math.max(eyeL.z, eyeR.z) + 0.02 * hs;
+  const faceGear: FaceGear = {
+    eyeL: new THREE.Vector3(eyeL.x, eyeL.y, Math.max(lensZ, bridge.z + 0.004)),
+    eyeR: new THREE.Vector3(eyeR.x, eyeR.y, Math.max(lensZ, bridge.z + 0.004)),
+    lens: Math.abs(eyeL.x - eyeR.x) * 0.36,
+    earX: rx * 0.98,
+    earY: K.y - 0.012 * hs,
+    earZ: K.z + 0.012 * hs,
+  };
+  buildFaceGear(c, gear, faceGear, stdFactory(track));
+
   // Long beards hang below the photo's jawline (shorter beards are already in the photo).
   if ((look.facialHair ?? 'none') === 'long') {
     const bm = stdFactory(track)(look.facialHairColor ?? look.hairColor, { roughness: 0.85 });
@@ -324,7 +342,7 @@ export function buildPhotoHead(c: THREE.Group, photo: PhotoHead, look: Look, ski
 
 // ------------------------------------------------------------------ procedural head
 
-export function buildHead(c: THREE.Group, look: Look, R: number, skin: THREE.Material, track: Track, disposables: Disposables, seed: number): void {
+export function buildHead(c: THREE.Group, look: Look, R: number, skin: THREE.Material, track: Track, disposables: Disposables, seed: number, gear: Set<GearId> = new Set()): void {
   const std = stdFactory(track);
   const add = (geo: THREE.BufferGeometry, m: THREE.Material, pos: [number, number, number], opts: { rot?: [number, number, number]; scale?: [number, number, number] } = {}) => {
     const me = mesh(geo, m, pos, opts.rot, opts.scale);
@@ -349,8 +367,78 @@ export function buildHead(c: THREE.Group, look: Look, R: number, skin: THREE.Mat
   add(new THREE.BoxGeometry(R * 0.36, R * 0.045, R * 0.05), std(0x7a3a36, { roughness: 0.4 }), [0, -R * 0.4, R * 0.9]);
   buildHair(c, look, R, track, disposables, seed);
   buildFacialHair(c, look, R, std);
-  buildGlasses(c, look, R, std);
+  buildGlasses(c, gear.has('aviators') || gear.has('shades') ? { ...look, glasses: 'none' } : look, R, std);
   buildHeadwear(c, look, R, std);
+  buildFaceGear(c, gear, {
+    eyeL: new THREE.Vector3(R * 0.32, R * 0.1, R * 1.02),
+    eyeR: new THREE.Vector3(-R * 0.32, R * 0.1, R * 1.02),
+    lens: R * 0.2,
+    earX: R * 0.9,
+    earY: -R * 0.02,
+    earZ: -R * 0.02,
+  }, std);
+}
+
+interface FaceGear {
+  eyeL: THREE.Vector3;
+  eyeR: THREE.Vector3;
+  /** Lens radius. */
+  lens: number;
+  earX: number;
+  earY: number;
+  earZ: number;
+}
+
+/** Sunglasses (aviator or dark wraparound), a security earpiece and earrings. */
+function buildFaceGear(c: THREE.Group, gear: Set<GearId>, f: FaceGear, std: Std): void {
+  const add = (geo: THREE.BufferGeometry, m: THREE.Material, pos: THREE.Vector3 | [number, number, number], rot: [number, number, number] = [0, 0, 0], scale?: [number, number, number]) => {
+    const me = mesh(geo, m, pos instanceof THREE.Vector3 ? [pos.x, pos.y, pos.z] : pos, rot, scale);
+    c.add(me);
+    return me;
+  };
+  const aviator = gear.has('aviators');
+  if (aviator || gear.has('shades')) {
+    const frame = aviator ? std(0xc9a44a, { metalness: 1, roughness: 0.25 }) : std(0x0e0f11, { roughness: 0.35 });
+    const lensMat = new THREE.MeshPhysicalMaterial({ color: aviator ? 0x3b2c18 : 0x0b0c0f, metalness: 0.4, roughness: 0.05, clearcoat: 1, clearcoatRoughness: 0.05, envMapIntensity: 2.2 });
+    const r = f.lens;
+    for (const e of [f.eyeL, f.eyeR]) {
+      const sx = Math.sign(e.x) || 1;
+      if (aviator) {
+        // Teardrop lens with a thin gold rim.
+        add(new THREE.SphereGeometry(r, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.32), lensMat, [e.x, e.y - r * 0.1, e.z - r * 0.62], [Math.PI / 2, 0, 0], [1.12, 0.6, 1]);
+        add(new THREE.TorusGeometry(r * 0.98, r * 0.06, 6, 28), frame, [e.x, e.y - r * 0.1, e.z + r * 0.02], [0, 0, 0], [1.12, 1, 1]);
+      } else {
+        add(new RoundedBoxGeometry(r * 2.3, r * 1.45, r * 0.25, 3, r * 0.12), lensMat, [e.x + sx * r * 0.1, e.y, e.z]);
+      }
+      // Temple arm back to the ear.
+      const from = new THREE.Vector3(e.x + sx * r * 1.1, e.y + r * 0.2, e.z - r * 0.2);
+      const to = new THREE.Vector3(sx * f.earX, f.earY + r * 0.35, f.earZ);
+      const mid = from.clone().add(to).multiplyScalar(0.5);
+      const arm = add(new THREE.CylinderGeometry(r * 0.07, r * 0.07, from.distanceTo(to), 6), frame, mid);
+      arm.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), to.clone().sub(from).normalize());
+    }
+    const br = f.eyeL.clone().add(f.eyeR).multiplyScalar(0.5);
+    add(new THREE.CylinderGeometry(r * 0.08, r * 0.08, Math.abs(f.eyeL.x - f.eyeR.x) - r * 1.9, 6), frame, [br.x, br.y + r * (aviator ? 0.55 : 0.35), br.z + r * 0.05], [0, 0, Math.PI / 2]);
+  }
+  if (gear.has('earpiece')) {
+    const clear = new THREE.MeshPhysicalMaterial({ color: 0xdfe6ea, transparent: true, opacity: 0.55, roughness: 0.1, transmission: 0.3 });
+    const x = -f.earX;
+    add(new THREE.SphereGeometry(0.009, 10, 8), clear, [x - 0.004, f.earY, f.earZ + 0.01]);
+    const curve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(x - 0.004, f.earY - 0.008, f.earZ + 0.008),
+      new THREE.Vector3(x * 1.02, f.earY - 0.07, f.earZ - 0.02),
+      new THREE.Vector3(x * 0.85, f.earY - 0.16, f.earZ - 0.05),
+      new THREE.Vector3(x * 0.6, f.earY - 0.26, f.earZ - 0.06),
+    ]);
+    c.add(mesh(new THREE.TubeGeometry(curve, 24, 0.0025, 6), clear, [0, 0, 0]));
+  }
+  if (gear.has('earrings')) {
+    const gold = std(0xe0b34a, { metalness: 1, roughness: 0.2 });
+    for (const sx of [1, -1]) {
+      add(new THREE.SphereGeometry(0.006, 10, 8), gold, [sx * (f.earX + 0.003), f.earY - 0.04, f.earZ + 0.008]);
+      add(new THREE.TorusGeometry(0.012, 0.0022, 6, 18), gold, [sx * (f.earX + 0.004), f.earY - 0.055, f.earZ + 0.008], [0, Math.PI / 2, 0]);
+    }
+  }
 }
 
 function hairMaterial(color: number, track: Track, disposables: Disposables, seed: number): THREE.MeshStandardMaterial {
@@ -605,6 +693,15 @@ export function buildHeadwear(c: THREE.Group, look: Look, R: number, std: Std): 
     case 'beret':
       c.add(mesh(new THREE.SphereGeometry(R * 1.1, 24, 12), m, [R * 0.1, R * 0.78, -R * 0.05], [0, 0, -0.2], [1.1, 0.35, 1.1]));
       break;
+    case 'hardhat': {
+      const g = grp([0, R * 0.2, 0], -0.08);
+      const shell = std(color, { roughness: 0.32 });
+      g.add(mesh(new THREE.SphereGeometry(R * 1.1, 28, 14, 0, Math.PI * 2, 0, Math.PI / 2), shell, [0, 0, 0], [0, 0, 0], [1, 0.9, 1.08]));
+      g.add(mesh(new THREE.CylinderGeometry(R * 1.2, R * 1.24, R * 0.05, 32), shell, [0, 0, R * 0.12], [0, 0, 0], [1, 1, 1.14]));
+      g.add(mesh(new RoundedBoxGeometry(R * 0.22, R * 0.14, R * 2.0, 2, R * 0.05), shell, [0, R * 0.95, 0]));
+      g.add(mesh(new THREE.TorusGeometry(R * 1.02, R * 0.03, 6, 32), std(0x3a3a3a, { roughness: 0.8 }), [0, R * 0.1, 0], [Math.PI / 2, 0, 0], [1, 1.08, 1]));
+      break;
+    }
     case 'scarf':
       c.add(mesh(new THREE.SphereGeometry(R * 1.1, 26, 16, 0, Math.PI * 2, 0, Math.PI * 0.62), m, [0, 0, -R * 0.05], [0, 0, 0], [0.96, 1.05, 1.02]));
       c.add(mesh(new THREE.CylinderGeometry(R * 1.02, R * 1.15, R * 1.3, 24, 1, true, Math.PI * 0.35, Math.PI * 1.3), m, [0, -R * 0.55, -R * 0.03]));

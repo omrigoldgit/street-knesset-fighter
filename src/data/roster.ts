@@ -104,7 +104,7 @@ export const ROSTER: CharacterDef[] = [
     role: 'Transport Minister',
     bio: 'Former IDF spokesperson and Culture Minister. Now controls every road, runway and traffic light.',
     style: 'rushdown', stats: { speed: 1.02 },
-    look: { skin: SK.medium, height: 0.94, build: 0.92, hair: 'bob', hairColor: H.black, outfit: 'blazer', jacket: 0xc1121f, shirt: 0x111111, tie: null, pants: 0x111111, female: true },
+    look: { skin: SK.medium, height: 0.94, build: 0.92, hair: 'bob', hairColor: H.black, outfit: 'dress', jacket: 0xf4ecdc, shirt: 0xf4ecdc, tie: null, pants: 0xf4ecdc, shoes: 0xc9a227, female: true },
     specials: [
       { type: 'trap', name: 'Traffic Jam', prop: 'cone', color: 0xff7b00, damage: 40, effect: { slow: 180 }, desc: "Drops a traffic cone. Step on it and you're stuck in traffic." },
       { type: 'rush', name: 'Highway Rush', color: 0xffba08, hits: 2, damage: 115, distance: 4 },
@@ -217,7 +217,7 @@ export const ROSTER: CharacterDef[] = [
       { type: 'teleport', name: 'Return Flight', color: 0xbde0fe, mode: 'behind', attack: true },
     ],
     ultimate: { type: 'cinematic', name: 'Summit Meeting', color: 0x3a86ff, prop: 'flag' },
-    passive: { id: 'regen', name: 'New Hope', desc: 'Recovers part of his lost health when not taking damage.' },
+    passive: { id: 'mimic', name: 'Party Switcher', desc: "Every round he switches sides: copies the opponent's special moves and Heat Smash." },
     quotes: { intro: "I left. I came back. Now I'm here for you.", win: 'Diplomacy by other means.' },
   },
   {

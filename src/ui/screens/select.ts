@@ -1,6 +1,7 @@
 import { ROSTER, bossVariant } from '../../data/roster';
 import { PARTIES } from '../../data/parties';
 import { STAGES, type StageDef } from '../../data/stages';
+import { signatureFor } from '../../data/signatures';
 import type { CharacterDef } from '../../game/characterTypes';
 import { computeStats } from '../../game/fighter';
 import { STYLE_INFO } from '../../game/normals';
@@ -23,6 +24,12 @@ function statBars(def: CharacterDef): string {
   return vals.map(([n, v]) => `<span>${n}</span><div class="bar"><i style="width:${Math.round(Math.max(0.08, Math.min(1, v)) * 100)}%"></i></div>`).join('');
 }
 
+/** Tekken-style fighting style, height, and the MK's signature trick. */
+export function styleLine(def: CharacterDef): string {
+  const sig = signatureFor(def.id);
+  return `<div class="fstyle">Fighting style: <b>${esc(sig.styleName)}</b> · ${(sig.cm / 100).toFixed(2)} m</div>${sig.trait ? `<div class="trait">${esc(sig.trait)}</div>` : ''}`;
+}
+
 function infoHTML(def: CharacterDef, who: string, locked: boolean, right: boolean): string {
   const stats = `<div class="stats">${right ? statBars(def).replace(/<span>(\w+)<\/span>(<div class="bar">.*?<\/div>)/g, '$2<span>$1</span>') : statBars(def)}</div>`;
   return `<div class="who">${esc(who)}</div>
@@ -30,6 +37,7 @@ function infoHTML(def: CharacterDef, who: string, locked: boolean, right: boolea
     <div class="he">${esc(def.nameHe)}</div>
     ${partyChip(def)}
     <div class="role">${esc(def.role)} · ${esc(STYLE_INFO[def.style])}</div>
+    ${styleLine(def)}
     <div class="passive"><b>${esc(def.passive.name)}:</b> ${esc(def.passive.desc)}</div>
     ${stats}
     ${locked ? '<div class="locked">✔ LOCKED IN</div>' : ''}`;

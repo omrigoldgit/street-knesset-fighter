@@ -2,8 +2,9 @@
 
 A 3D, **Tekken-style satirical fighting game** starring **40 members of the Knesset**: free 3D movement around a
 circular arena, sidesteps, launchers and juggles, wall splats and Rage Arts.
-Each MK gets a **3D head built from their real photo**, their own fighting stance and signature intro/victory gestures,
-**3 unique special moves**, a **Heat Smash**, and a **passive special ability**. It runs on PC in Chrome or Edge, or as a desktop app, and supports **PS5 DualSense controllers**
+Each MK gets a **3D head built from their real photo**, their own **height and build**, outfit and accessories, a
+Tekken-style **fighting style and signature gimmick**, their own stance and intro/victory gestures, **3 unique special moves**,
+a **Heat Smash**, and a **passive special ability**. It runs on PC in Chrome or Edge, or as a desktop app, and supports **PS5 DualSense controllers**
 out of the box. Keyboard works too.
 
 > ⚠️ **Parody.** Every character is a caricature of a public figure. Moves, bios and quotes are affectionate political satire,
@@ -100,6 +101,22 @@ the face models (~10 MB) and scans all 40 faces once. The results are cached in 
 or switch a single MK back to the cartoon. **Options → Faces → Cartoon** turns photos off entirely. Offline, the game falls back
 to procedural caricatures.
 
+## Tekken-style signatures
+
+Like Tekken's cast (the sword master, the winged devil, the bear, the wooden mimic), many MKs bring a trick of their own:
+
+- **Weapons they never put down**: Levin's judge's gavel, Lapid's news microphone, Ofir Katz's (literal) coalition whip,
+  Rothman's volume of Basic Laws, Amsalem's megaphone, Smotrich's treasury briefcase, Eisenkot's battle map, Karhi's phone
+- **Kisch** (former fighter pilot): jet wings that unfold whenever he jumps or uses a special
+- **Barkat** (former mayor of Jerusalem): the Lion of Jerusalem fights at his side and pounces with his specials
+- **Netanyahu**: Iron Dome drones hover at his shoulders and circle him while his shield is up
+- **Sa'ar, the Party Switcher**: every round he switches sides and copies his opponent's special moves and Heat Smash
+- **Outfits**: Katz's hard hat and hi-vis vest, Gotliv's lawyer's gown, Abbas's dentist's coat, Gafni's and Goldknopf's
+  frock coats, Regev's Jerusalem skyline dress, Dichter's dark glasses and earpiece, Tibi's stethoscope, Gantz's binoculars,
+  Lazimi's backpack and sneakers
+- **Bodies**: heights from about 1.59 m to 1.94 m, and slim, athletic, stocky or heavy builds, all exaggerated a
+  little so they read at a glance. Edit `src/data/signatures.ts` to change any of it
+
 ## Features
 
 - **40 playable MKs** across 13 parties, each with a 3D photo-scanned face, fitted hair, beards, kippot, hats, glasses, and a tailored suit or outfit with party pin
@@ -115,8 +132,10 @@ to procedural caricatures.
   homing attacks judged by lateral hitbox width; startup/active/recovery frame data; hitstop; strings and special/super cancels;
   launchers, floaty juggles, screws, wall splats, tech rolls; Tekken guard (high/mid/low); throws and throw breaks;
   counter-hits and crumples; armor; invincibility; projectile clashes; Rage and Rage Arts
-- **Animation**: spring-driven joints for snap and follow-through, two-bone leg IK with planted feet and a stepping gait,
-  and hit reactions that snap the head back on highs and fold the body on mids
+- **Animation**: spring-driven joints for snap and follow-through, strikes that whip from the hips out to the fist,
+  glowing strike trails, two-bone leg IK with planted feet and a stepping gait, breathing and weight-shifting idles,
+  heavier builds that sway and settle, older MKs' stoop, coat tails, jacket hems and bellies on spring bones, and hit
+  reactions that snap the head back on highs and fold the body on mids
 - **Modes**: Arcade (7 MKs plus a final boss, with continues and an ending), Versus (local 2P), Training (dummy settings, hitboxes, input display),
   CPU vs CPU
 - **CPU AI** with 5 difficulty levels (*Backbencher* to *Supreme Court*): guards, ducks highs, sidesteps linear moves,

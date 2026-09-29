@@ -5,6 +5,7 @@
 
 import * as THREE from 'three';
 import type { GestureId, Persona, StanceId } from '../data/personas';
+import type { BodyShape } from '../data/signatures';
 import { GETUP_FRAMES, TECHROLL_FRAMES } from '../game/constants';
 import type { Fighter } from '../game/fighter';
 import type { Match } from '../game/match';
@@ -567,6 +568,33 @@ function attackPose(out: PoseArr, anim: AttackAnim, f: number, s: number, a: num
   return 1 - q;
 }
 
+/** Channels grouped by how early they move in a strike: legs and hips lead, arms follow, head trails. */
+const CHAIN_LEAD: number[] = [];
+const CHAIN_MID: number[] = [];
+const CHAIN_TRAIL: number[] = [];
+for (const j of ['hips', 'lHip', 'lKnee', 'rHip', 'rKnee'] as Joint[]) for (let k = 0; k < 3; k++) CHAIN_LEAD.push(I[j] + k);
+CHAIN_LEAD.push(HIPY, PIVX, PIVZ);
+for (const j of ['spine', 'chest'] as Joint[]) for (let k = 0; k < 3; k++) CHAIN_MID.push(I[j] + k);
+for (const j of ['neck', 'head'] as Joint[]) for (let k = 0; k < 3; k++) CHAIN_TRAIL.push(I[j] + k);
+const _lead = new Float32Array(N);
+const _mid = new Float32Array(N);
+const _trail = new Float32Array(N);
+
+/**
+ * Attack pose with a kinetic chain: the hips and legs drive the strike a frame and a half ahead,
+ * the torso follows, the arms land on the frame and the head trails, so blows whip through.
+ */
+function attackPoseChain(out: PoseArr, anim: AttackAnim, f: number, s: number, a: number, r: number): number {
+  const w = attackPose(out, anim, f, s, a, r);
+  attackPose(_lead, anim, f + 1.5, s, a, r);
+  attackPose(_mid, anim, f + 0.75, s, a, r);
+  attackPose(_trail, anim, Math.max(0, f - 0.75), s, a, r);
+  for (const i of CHAIN_LEAD) out[i] = _lead[i];
+  for (const i of CHAIN_MID) out[i] = _mid[i];
+  for (const i of CHAIN_TRAIL) out[i] = _trail[i];
+  return w;
+}
+
 // ------------------------------------------------------------------ leg IK
 
 const L1 = THIGH_LEN;
@@ -648,8 +676,16 @@ export class Animator {
   /** This fighter's body language. */
   private persona: Persona | null = null;
   private stance: Stance = STANCES.mma;
+  /** Build: heavy fighters move slower and sway; older ones stoop. */
+  private heavy = 0.3;
+  private hunch = 0;
   hands: [HandShape, HandShape] = ['fist', 'fist'];
   private shownHands: [HandShape | null, HandShape | null] = [null, null];
+
+  setBody(b: BodyShape): void {
+    this.heavy = b.heavy;
+    this.hunch = b.hunch;
+  }
 
   setPersona(p: Persona): void {
     this.persona = p;
@@ -666,16 +702,40 @@ export class Animator {
     this.ikL = this.ikR = 1;
   }
 
-  /** Stance pose with its idle bounce. */
+  /** Stance pose with its idle bounce, breathing and a slow weight shift. */
   private idle(t: PoseArr, time: number, phase: number): void {
     const st = this.stance;
-    const br = Math.sin(time * 3.4 * st.tempo + phase) * 0.5 + 0.5;
+    const hv = this.heavy;
+    const tempo = st.tempo * (1.08 - 0.3 * hv);
+    const bounce = st.bounce * (1 - 0.35 * hv);
+    const br = Math.sin(time * 3.4 * tempo + phase) * 0.5 + 0.5;
+    // Heavier builds settle into the knees between bounces.
+    const settle = br * br * (3 - 2 * br);
     t.set(st.pose);
-    t[HIPY] -= br * 0.024 * st.bounce;
-    t[I.spine] += br * 0.04 * st.bounce;
-    t[I.lSh] += br * 0.05 * st.bounce;
-    t[I.rSh] -= br * 0.03 * st.bounce;
+    t[HIPY] -= settle * 0.026 * bounce + hv * 0.012;
+    t[I.spine] += br * 0.04 * bounce;
+    t[I.lSh] += br * 0.05 * bounce;
+    t[I.rSh] -= br * 0.03 * bounce;
+    t[I.lEl] -= br * 0.04 * bounce;
+    // Breathing: chest lifts, shoulders rise a touch.
+    const breath = Math.sin(time * 1.7 + phase * 0.7);
+    t[I.chest] -= breath * 0.025;
+    t[I.lSh + Z] += breath * 0.015;
+    t[I.rSh + Z] -= breath * 0.015;
+    // Weight shift from foot to foot every few seconds.
+    const shift = Math.sin(time * 0.55 + phase * 1.9);
+    t[PIVZ] += shift * (0.02 + hv * 0.015);
+    t[I.spine + Z] -= shift * 0.03;
+    t[I.head + Z] -= shift * 0.02;
     this.hands = st.hands;
+  }
+
+  /** Older MKs stoop a little: rounded upper back, head pushed forward but eyes level. */
+  private posture(t: PoseArr): void {
+    if (this.hunch <= 0) return;
+    t[I.chest] += this.hunch;
+    t[I.neck] += this.hunch * 0.6;
+    t[I.head] -= this.hunch * 1.2;
   }
 
   /** Current body lean (used to roll camera-facing photo heads when lying down). */
@@ -757,10 +817,20 @@ export class Animator {
           t.set(this.stance.pose);
           this.hands = this.stance.hands;
         }
-        stride = 0.26;
-        lift = 0.07;
-        t[HIPY] -= 0.018 * (0.5 - 0.5 * Math.cos(this.gaitPhase * TAU * 2));
-        spring = [320, 0.85];
+        {
+          stride = 0.26 * (1 - 0.15 * this.heavy);
+          lift = 0.07;
+          const g = this.gaitPhase * TAU;
+          t[HIPY] -= 0.018 * (0.5 - 0.5 * Math.cos(g * 2));
+          // Hips swing with the stepping leg, shoulders counter-rotate, heavy builds waddle.
+          t[I.hips + Y] += Math.sin(g) * 0.1;
+          t[I.spine + Y] -= Math.sin(g) * 0.07;
+          t[I.lSh] += Math.sin(g) * 0.1;
+          t[I.rSh] -= Math.sin(g) * 0.1;
+          t[PIVZ] += Math.sin(g) * (0.015 + 0.05 * this.heavy);
+          t[I.head + Z] -= Math.sin(g) * 0.03 * this.heavy;
+          spring = [320 * (1 - 0.2 * this.heavy), 0.85];
+        }
         break;
       case 'crouch':
         t.set(f.guarding ? CROUCH_BLOCK : CROUCH);
@@ -842,7 +912,7 @@ export class Animator {
           lerpInto(t, anim.windup, anim.strike, ease(fr / 26));
           if (fr > 30) lerpInto(t, anim.strike, GUARD, ease((fr - 30) / 14));
         } else {
-          w = attackPose(t, anim, fr, s, mv.active, mv.recovery);
+          w = attackPoseChain(t, anim, fr, s, mv.active, mv.recovery);
         }
         if (mv.anim === 'spinKick' && fr > s && fr <= s + mv.active) spinTarget = (fr - s) * 0.7;
         if (anim.spin && fr <= s + mv.active) spinTarget = anim.spin * easeOut((fr - 0.35 * s) / (0.65 * s + 1));
@@ -968,6 +1038,8 @@ export class Animator {
     // Limp, open hands when knocked about.
     if (!upright || f.state === 'dizzy') this.hands = ['open', 'open'];
 
+    if (upright) this.posture(t);
+
     // Keep the gaze on the opponent whatever the torso is doing.
     if (upright) t[I.head + Y] += -(t[I.hips + Y] + t[I.spine + Y] + t[I.chest + Y]) * 0.9;
 
@@ -1068,6 +1140,7 @@ export class Animator {
     } else {
       this.idle(t, time, phase);
     }
+    this.posture(t);
     t[I.head + Y] += -(t[I.hips + Y] + t[I.spine + Y] + t[I.chest + Y]) * 0.9;
     this.hidden = false;
     this.spin *= 0.8;

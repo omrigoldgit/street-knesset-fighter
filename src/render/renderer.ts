@@ -13,6 +13,8 @@ import { buildCharacter, disposeRig, type Rig } from './characterModel';
 import { Effects } from './effects';
 import { additive } from './materials';
 import { buildProp } from './props';
+import { SignatureKit, type SigContext } from './signature';
+import { SwooshTrail } from './trail';
 import { buildStage, disposeStage, type BuiltStage } from './stage';
 import { faceTexture, photoHead } from './faces';
 import { EnvBuilder } from './env';
@@ -41,11 +43,16 @@ class FighterView {
   whip: THREE.Mesh;
   private auraTimer = 0;
   private prevState = '';
+  kit: SignatureKit;
+  trail: SwooshTrail;
+  /** Party Switch (mimic) wood-grain flash, frames left. */
+  mimicFlash = 0;
 
   constructor(def: CharacterDef) {
     // Best available head: 3D photo face, else the flat photo card, else the caricature.
     const photo = photoHead(def.id);
     this.rig = buildCharacter(def, { photo, face: photo ? null : faceTexture(def.id) });
+    this.anim.setBody(this.rig.body);
     this.anim.setPersona(personaFor(def.id, def.style));
     this.shield = new THREE.Mesh(new THREE.SphereGeometry(1.05, 24, 16), additive(0x9fd3ff, 0.22));
     this.shield.position.y = 0.95;
@@ -62,6 +69,17 @@ class FighterView {
     this.whip = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 1, 6), new THREE.MeshBasicMaterial({ color: 0x3a2a1a }));
     this.whip.visible = false;
     this.rig.root.add(this.whip);
+    this.kit = new SignatureKit(this.rig);
+    this.trail = new SwooshTrail(this.rig);
+  }
+
+  /** Secondary motion, signature gear and strike trails, once the rig is posed and placed. */
+  finish(dt: number, ctx: Omit<SigContext, 'dt'>, strike: { active: boolean; color: number; frozen?: boolean } = { active: false, color: 0xffffff }): void {
+    this.rig.root.updateMatrixWorld(true);
+    this.rig.jiggle.update(dt);
+    this.kit.update({ ...ctx, dt, propHand: this.prop ? 'r' : ctx.propHand });
+    // Trails hold still through hitstop, like the rest of the frame.
+    if (!strike.frozen) this.trail.update(dt, strike.active && this.rig.root.visible, strike.color);
   }
 
   /**
@@ -111,8 +129,12 @@ class FighterView {
     const flash = f.flash > 0 ? Math.min(1, f.flash / 5) * 0.7 : 0;
     const buff = f.buffs.find((b) => b.kind !== 'shield' && b.kind !== 'reflect' && b.kind !== 'slow');
     const t = m.ticks / 60;
+    if (this.mimicFlash > 0) this.mimicFlash--;
+    const wood = this.mimicFlash > 0 ? (this.mimicFlash / 60) * (0.6 + 0.4 * Math.sin(t * 20)) : 0;
     for (const mat of this.rig.materials) {
-      if (flash > 0) {
+      if (wood > 0) {
+        mat.emissive.setRGB(0.55 * wood, 0.33 * wood, 0.12 * wood);
+      } else if (flash > 0) {
         mat.emissive.setRGB(flash * 0.5, flash * 0.42, flash * 0.34);
       } else if (buff) {
         mat.emissive.setHex(buff.color).multiplyScalar(0.18 + 0.1 * Math.sin(t * 8));
@@ -189,9 +211,29 @@ class FighterView {
         (this.whip.material as THREE.MeshBasicMaterial).color.setHex(mv.color ?? 0x3a2a1a);
       }
     }
+
+    const moveLen = mv ? mv.startup + mv.active + mv.recovery : 1;
+    const striking = (f.state === 'attack' && !!mv && mv.tag !== 'projectile' && f.moveFrame >= mv.startup * 0.5 && f.moveFrame <= mv.startup + mv.active + 2) || cinematicAtt;
+    this.finish(dt, {
+      time: t,
+      airborne: !f.grounded,
+      special: (f.state === 'attack' && (mv?.kind === 'special' || mv?.kind === 'super')) || cinematicAtt,
+      moveT: f.state === 'attack' ? Math.min(1, f.moveFrame / moveLen) : 0,
+      intro: f.state === 'intro',
+      victory: f.state === 'victory',
+      showcase: false,
+      shieldHits: f.buff('shield')?.value ?? 0,
+      heat: f.meter,
+      propHand: null,
+      lash: f.state === 'attack' && mv?.tag === 'pull',
+      fx: effects,
+    }, { active: striking, frozen: m.hitstop > 0, color: mv?.color ?? (f.inRage ? RAGE_COLOR : 0x9fd3ff) });
   }
 
   dispose(): void {
+    this.trail.mesh.parent?.remove(this.trail.mesh);
+    this.trail.dispose();
+    this.kit.dispose();
     disposeRig(this.rig);
   }
 }
@@ -432,6 +474,7 @@ export class GameRenderer {
     this.views = defs.map((d) => {
       const v = new FighterView(d);
       this.scene.add(v.rig.root);
+      this.scene.add(v.trail.mesh);
       return v;
     });
     for (const pv of this.projViews.values()) this.scene.remove(pv.obj);
@@ -501,6 +544,14 @@ export class GameRenderer {
       case 'techroll': {
         const f = m.fighters[ev.fighter];
         fx.burst(f.x, 0.08, f.z, DUST, 12, 0.05, 0.05, 0.001, 22);
+        break;
+      }
+      case 'mimic': {
+        const f = m.fighters[ev.fighter];
+        const v = this.views[ev.fighter];
+        if (v) v.mimicFlash = 60;
+        fx.burst(f.x, 1.0, f.z, 0xc8a165, 40, 0.08, 0.06, 0.002, 36);
+        fx.ring(f.x, 0.05, f.z, 0xc8a165, 0.3, 2.2, 26, true);
         break;
       }
       case 'rage': {
@@ -761,6 +812,19 @@ export class GameRenderer {
       for (const m of view.rig.materials) m.emissive.setRGB(0, 0, 0);
       view.shield.visible = false;
       view.stars.visible = false;
+      view.finish(dt, {
+        time: this.time + i * 1.7,
+        airborne: false,
+        special: false,
+        moveT: 0,
+        intro: slot.pose === 'intro',
+        victory: slot.pose === 'victory',
+        showcase: true,
+        shieldHits: 0,
+        heat: 0,
+        propHand: null,
+        lash: false,
+      });
     });
     this.stage?.update(this.time);
     const k = 1 - Math.exp(-dt * 4);
